@@ -380,7 +380,8 @@
             <div class="p-3.5 md:p-4 border-b border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                 <div class="flex items-center space-x-2">
                     <span class="text-lg">📊</span>
-                    <h3 class="text-sm md:text-base font-bold text-white">T 字勒式期權全盤監控表 (Put 賣方 ← 履約價 Strike → Call 賣方)</h3>
+                    <h3 class="text-sm md:text-base font-bold text-white">T 字勒式期權全盤監控表 (Call 賣方 ← 履約價 Strike → Put 賣方)</h3>
+                    <span id="options-range-badge" class="hidden md:inline-block text-[11px] font-mono text-slate-400 bg-slate-950 px-2.5 py-0.5 rounded-full border border-slate-800"></span>
                 </div>
                 <div class="flex items-center gap-2 text-xs text-slate-400">
                     <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-emerald-500/20 border border-emerald-500 inline-block"></span>Delta 0.15~0.20 黃金收租區間</span>
@@ -392,22 +393,22 @@
                 <table class="w-full text-left text-xs">
                     <thead class="bg-slate-950/80 text-slate-400 font-mono border-b border-slate-800 text-[11px]">
                         <tr>
-                            <!-- Put 側 (左) -->
-                            <th class="py-2.5 px-2 text-right text-rose-400">Put 未平倉</th>
-                            <th class="py-2.5 px-2 text-right text-rose-400">Put 買價(Bid)</th>
-                            <th class="py-2.5 px-2 text-right text-slate-500">Put 賣價</th>
-                            <th class="py-2.5 px-2 text-right text-purple-400">Put IV</th>
-                            <th class="py-2.5 px-2 text-right text-rose-400 font-bold">Put Delta</th>
+                            <!-- Call 側 (左) -->
+                            <th class="py-2.5 px-2 text-right text-emerald-400">Call 未平倉</th>
+                            <th class="py-2.5 px-2 text-right text-emerald-400 font-semibold">Call 買價(Bid)</th>
+                            <th class="py-2.5 px-2 text-right text-slate-500">Call 賣價</th>
+                            <th class="py-2.5 px-2 text-right text-purple-400">Call IV</th>
+                            <th class="py-2.5 px-2 text-right text-emerald-400 font-bold">Call Delta</th>
                             
                             <!-- 中間履約價 -->
                             <th class="py-2.5 px-3 text-center text-amber-400 bg-slate-900 border-x border-slate-800 font-bold">履約價 Strike</th>
 
-                            <!-- Call 側 (右) -->
-                            <th class="py-2.5 px-2 text-left text-emerald-400 font-bold">Call Delta</th>
-                            <th class="py-2.5 px-2 text-left text-purple-400">Call IV</th>
-                            <th class="py-2.5 px-2 text-left text-emerald-400">Call 買價(Bid)</th>
-                            <th class="py-2.5 px-2 text-left text-slate-500">Call 賣價</th>
-                            <th class="py-2.5 px-2 text-left text-emerald-400">Call 未平倉</th>
+                            <!-- Put 側 (右) -->
+                            <th class="py-2.5 px-2 text-left text-rose-400 font-bold">Put Delta</th>
+                            <th class="py-2.5 px-2 text-left text-purple-400">Put IV</th>
+                            <th class="py-2.5 px-2 text-left text-rose-400 font-semibold">Put 買價(Bid)</th>
+                            <th class="py-2.5 px-2 text-left text-slate-500">Put 賣價</th>
+                            <th class="py-2.5 px-2 text-left text-rose-400">Put 未平倉</th>
                         </tr>
                     </thead>
                     <tbody id="options-tbody" class="divide-y divide-slate-800/60 font-mono">
@@ -884,7 +885,39 @@
             const F = globalData.futures_price || 0;
             const ma240 = globalData.ma240_support || 0;
 
-            tbody.innerHTML = cycle.options.map(opt => {
+            // 依用戶指示：只保留推薦組合中「最低履約價」到「最高履約價」的精選區間
+            const candidateStrikes = [];
+            if (cycle.strategy?.optimal) {
+                if (cycle.strategy.optimal.put?.strike) candidateStrikes.push(cycle.strategy.optimal.put.strike);
+                if (cycle.strategy.optimal.call?.strike) candidateStrikes.push(cycle.strategy.optimal.call.strike);
+            }
+            if (cycle.strategy?.alternatives) {
+                cycle.strategy.alternatives.forEach(alt => {
+                    if (alt.put?.strike) candidateStrikes.push(alt.put.strike);
+                    if (alt.call?.strike) candidateStrikes.push(alt.call.strike);
+                });
+            }
+            if (myPositions) {
+                myPositions.forEach(p => {
+                    if (p.cycle_code === cycle.code) {
+                        if (p.has_put && p.put_strike) candidateStrikes.push(p.put_strike);
+                        if (p.has_call && p.call_strike) candidateStrikes.push(p.call_strike);
+                    }
+                });
+            }
+
+            let minStrike = candidateStrikes.length > 0 ? Math.min(...candidateStrikes) : (F - 1000);
+            let maxStrike = candidateStrikes.length > 0 ? Math.max(...candidateStrikes) : (F + 1000);
+
+            // 過濾僅保留最低到最高推薦履約價區間的期權行
+            const visibleOptions = cycle.options.filter(opt => opt.strike >= minStrike && opt.strike <= maxStrike);
+
+            const rangeBadge = document.getElementById("options-range-badge");
+            if (rangeBadge) {
+                rangeBadge.innerText = `精選區間：${minStrike.toLocaleString()} ~ ${maxStrike.toLocaleString()} (共 ${visibleOptions.length} 檔)`;
+            }
+
+            tbody.innerHTML = visibleOptions.map(opt => {
                 const isATM = Math.abs(opt.strike - F) <= 50;
                 const isMa240 = opt.is_near_ma240;
 
@@ -900,23 +933,26 @@
 
                 return `
                     <tr class="hover:bg-slate-800/40 transition">
-                        <td class="py-2 px-2 text-right text-slate-400">${opt.put.oi > 0 ? opt.put.oi.toLocaleString() : "-"}</td>
-                        <td class="py-2 px-2 text-right text-rose-400 font-semibold ${putHighlight}">${opt.put.bid > 0 ? opt.put.bid : "-"}</td>
-                        <td class="py-2 px-2 text-right text-slate-500">${opt.put.ask > 0 ? opt.put.ask : "-"}</td>
-                        <td class="py-2 px-2 text-right text-purple-400">${opt.put.iv > 0 ? opt.put.iv + "%" : "-"}</td>
-                        <td class="py-2 px-2 text-right ${putHighlight}">${opt.put.delta.toFixed(2)}</td>
+                        <!-- Call 側 (左邊) -->
+                        <td class="py-2 px-2 text-right text-slate-400">${opt.call.oi > 0 ? opt.call.oi.toLocaleString() : "-"}</td>
+                        <td class="py-2 px-2 text-right text-emerald-400 font-semibold ${callHighlight}">${opt.call.bid > 0 ? opt.call.bid : "-"}</td>
+                        <td class="py-2 px-2 text-right text-slate-500">${opt.call.ask > 0 ? opt.call.ask : "-"}</td>
+                        <td class="py-2 px-2 text-right text-purple-400">${opt.call.iv > 0 ? opt.call.iv + "%" : "-"}</td>
+                        <td class="py-2 px-2 text-right ${callHighlight}">${opt.call.delta.toFixed(2)}</td>
 
+                        <!-- 履約價 (中間) -->
                         <td class="${strikeClass}">
                             <span>${opt.strike.toLocaleString()}</span>
                             ${isATM ? '<span class="ml-1 text-[9px] px-1 py-0.2 bg-amber-500 text-black rounded font-sans font-bold">ATM</span>' : ''}
                             ${isMa240 ? '<span class="ml-1 text-[9px] px-1 py-0.2 bg-cyan-700 text-white rounded font-sans">240MA</span>' : ''}
                         </td>
 
-                        <td class="py-2 px-2 text-left ${callHighlight}">${opt.call.delta.toFixed(2)}</td>
-                        <td class="py-2 px-2 text-left text-purple-400">${opt.call.iv > 0 ? opt.call.iv + "%" : "-"}</td>
-                        <td class="py-2 px-2 text-left text-emerald-400 font-semibold ${callHighlight}">${opt.call.bid > 0 ? opt.call.bid : "-"}</td>
-                        <td class="py-2 px-2 text-left text-slate-500">${opt.call.ask > 0 ? opt.call.ask : "-"}</td>
-                        <td class="py-2 px-2 text-left text-slate-400">${opt.call.oi > 0 ? opt.call.oi.toLocaleString() : "-"}</td>
+                        <!-- Put 側 (右邊) -->
+                        <td class="py-2 px-2 text-left ${putHighlight}">${opt.put.delta.toFixed(2)}</td>
+                        <td class="py-2 px-2 text-left text-purple-400">${opt.put.iv > 0 ? opt.put.iv + "%" : "-"}</td>
+                        <td class="py-2 px-2 text-left text-rose-400 font-semibold ${putHighlight}">${opt.put.bid > 0 ? opt.put.bid : "-"}</td>
+                        <td class="py-2 px-2 text-left text-slate-500">${opt.put.ask > 0 ? opt.put.ask : "-"}</td>
+                        <td class="py-2 px-2 text-left text-slate-400">${opt.put.oi > 0 ? opt.put.oi.toLocaleString() : "-"}</td>
                     </tr>
                 `;
             }).join("");
