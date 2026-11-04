@@ -418,9 +418,41 @@ async function safeFetchJson(url) {
 }
 
 async function fetchMisQuoteList(endpoint, body, env) {
+    const relayUrls = [];
+    if (env && env.MIS_RELAY_URL) {
+        relayUrls.push(env.MIS_RELAY_URL);
+    }
+    // 官方中繼站（繞過期交所對 Cloudflare 海外 IP 的 520 阻擋）
+    relayUrls.push("https://txo-pricing-dashboard.vercel.app/api/mis");
+
+    // 1. 優先嘗試中繼
+    for (const rUrl of relayUrls) {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 4000);
+            const target = `${rUrl.replace(/\/+$/, "")}?endpoint=${endpoint}`;
+            const res = await fetch(target, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            if (res.ok) {
+                const json = await res.json();
+                if (json?.RtData?.QuoteList) {
+                    return json.RtData.QuoteList;
+                }
+            }
+        } catch (e) {
+            // relay failed, continue
+        }
+    }
+
+    // 2. 直連備援
     try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
         const res = await fetch(`https://mis.taifex.com.tw/futures/api/${endpoint}`, {
             method: "POST",
             headers: {
