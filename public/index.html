@@ -321,6 +321,7 @@
                         <span class="text-emerald-400" id="opt-call-strike">-- C</span>
                     </div>
                     <div class="text-[11px] text-slate-400 font-mono mt-0.5" id="opt-strikes-dist">P: --% | C: --%</div>
+                    <div class="text-xs font-bold text-amber-400 font-mono mt-1" id="opt-strikes-total-pts">總點數: -- 點</div>
                 </div>
 
                 <div class="bg-slate-950/80 p-3.5 rounded-2xl border border-slate-800">
@@ -767,6 +768,7 @@
             document.getElementById("opt-put-strike").innerText = `${opt.put.strike} P (Δ ${opt.put.delta})`;
             document.getElementById("opt-call-strike").innerText = `${opt.call.strike} C (Δ ${opt.call.delta})`;
             document.getElementById("opt-strikes-dist").innerText = `距現價 P: -${opt.put_dist_pct}% | C: +${opt.call_dist_pct}%`;
+            document.getElementById("opt-strikes-total-pts").innerText = `總收租: ${opt.total_premium} 點 (NT$ ${opt.total_premium_ntd.toLocaleString()})`;
 
             document.getElementById("opt-total-premium").innerHTML = `${opt.total_premium} <span class="text-xs font-normal text-slate-400">點</span>`;
             document.getElementById("opt-premium-ntd").innerText = `NT$ ${opt.total_premium_ntd.toLocaleString()} / 口`;
@@ -786,17 +788,40 @@
             if (alts.length === 0) {
                 altContainer.innerHTML = `<div class="text-slate-500 text-xs col-span-3">目前無其他替代組合</div>`;
             } else {
-                altContainer.innerHTML = alts.map((alt, i) => `
-                    <div class="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800 text-xs flex justify-between items-center hover:border-slate-700 transition">
+                const styleLabels = [
+                    { title: "穩健防禦型", desc: "更遠價外 · 寬裕防護墊", badge: "bg-blue-950 text-blue-300 border-blue-700" },
+                    { title: "對稱中性型", desc: "Delta 絕對對稱 · 均衡抗震", badge: "bg-cyan-950 text-cyan-300 border-cyan-700" },
+                    { title: "積極高租金", desc: "權利金最厚 · 加速時間價值衰退", badge: "bg-amber-950 text-amber-300 border-amber-700" }
+                ];
+                altContainer.innerHTML = alts.map((alt, i) => {
+                    const style = styleLabels[i] || { title: "候選組合", desc: "量化次優篩選", badge: "bg-slate-800 text-slate-300 border-slate-700" };
+                    return `
+                    <div class="bg-slate-950/80 p-3 rounded-2xl border border-slate-800 text-xs flex flex-col justify-between hover:border-slate-700 transition">
                         <div>
-                            <div class="font-mono font-bold text-white">${alt.put.strike}P / ${alt.call.strike}C</div>
-                            <div class="text-[10px] text-slate-400 font-mono mt-0.5">總點數: ${alt.total_premium} 點 (NT$ ${alt.total_premium_ntd.toLocaleString()})</div>
+                            <div class="flex items-center justify-between mb-1.5">
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${style.badge}">${style.title}</span>
+                                <span class="text-[10px] text-slate-400 font-mono">勝率 ${alt.win_rate_pct}%</span>
+                            </div>
+                            <div class="font-mono font-bold text-white flex items-center gap-1.5 mt-1">
+                                <span class="text-rose-400">${alt.put.strike}P (Δ${alt.put.delta})</span>
+                                <span class="text-slate-500">/</span>
+                                <span class="text-emerald-400">${alt.call.strike}C (Δ${alt.call.delta})</span>
+                            </div>
+                            <div class="text-xs text-amber-300 font-mono font-bold mt-1.5">
+                                總收租: ${alt.total_premium} 點 <span class="text-[11px] text-slate-400 font-normal">(NT$ ${alt.total_premium_ntd.toLocaleString()})</span>
+                            </div>
+                            <div class="text-[10px] text-slate-400 font-mono mt-0.5">
+                                距現價: P -${alt.put_dist_pct}% | C +${alt.call_dist_pct}%
+                            </div>
                         </div>
-                        <button onclick="applySpecificCombo(${activeCycleIndex}, ${i + 1})" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-[10px] text-emerald-400 rounded border border-slate-700">
-                            採用
-                        </button>
+                        <div class="mt-2.5 pt-2 border-t border-slate-800/80 flex justify-between items-center">
+                            <span class="text-[10px] text-slate-500">${style.desc}</span>
+                            <button onclick="applySpecificCombo(${activeCycleIndex}, ${i + 1})" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 active:bg-slate-900 text-emerald-400 rounded-lg border border-slate-700 font-medium text-[11px] transition">
+                                採用此組合
+                            </button>
+                        </div>
                     </div>
-                `).join("");
+                `}).join("");
             }
         }
 
