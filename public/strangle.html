@@ -631,8 +631,13 @@
 
         function forceClearCacheAndReload() {
             try {
+                // 安全保留個人實盤持倉，僅清除過期的市場快取與臨時會話
+                const savedPositions = localStorage.getItem("txo_my_positions_v4");
                 localStorage.clear();
                 sessionStorage.clear();
+                if (savedPositions) {
+                    localStorage.setItem("txo_my_positions_v4", savedPositions);
+                }
             } catch (e) {}
             window.location.href = window.location.pathname + '?t=' + Date.now();
         }
