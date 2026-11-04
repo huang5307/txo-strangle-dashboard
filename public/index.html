@@ -922,338 +922,291 @@ function saveCustomPosition() {
 }
 
 function renderPositionMonitor() {
-    const container = document.getElementById("positions-list-container");
-    const countBadge = document.getElementById("pos-count-badge");
-    const summaryStats = document.getElementById("portfolio-summary-stats");
-    if (!container) return;
+            const container = document.getElementById("positions-list-container");
+            const countBadge = document.getElementById("pos-count-badge");
+            const summaryStats = document.getElementById("portfolio-summary-stats");
+            if (!container) return;
 
-    const F = globalData?.futures_price || 0;
+            const F = globalData?.futures_price || 0;
 
-    if (!myPositions || myPositions.length === 0) {
-        countBadge.innerText = "0 個部位";
-        countBadge.className = "text-xs px-2.5 py-0.5 rounded-full font-semibold bg-slate-800 text-slate-300 border border-slate-700";
-        if (summaryStats) {
-            summaryStats.innerHTML = '<span class="text-slate-500">尚無即時部位</span>';
-        }
-        container.innerHTML = `
-            <div class="p-8 text-center bg-slate-950/60 rounded-2xl border border-dashed border-slate-800">
-                <div class="text-3xl mb-2">🎯</div>
-                <div class="text-sm font-semibold text-slate-300">目前尚未建立任何實盤持倉部位</div>
-                <p class="text-xs text-slate-500 mt-1 max-w-md mx-auto">點擊上方「➕ 新增實盤部位」自行填寫您的開倉口數與點數。系統將縱向列出所有週期合約，即時提供四大平倉防禦時機提醒！</p>
-                <button onclick="openNewPositionModal()" class="mt-4 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white rounded-xl shadow transition">➕ 立即手動新增部位</button>
-            </div>
-        `;
-        return;
-    }
-
-    const totalContracts = myPositions.reduce((s, p) => s + (parseInt(p.contracts, 10) || 1), 0);
-    countBadge.innerText = `共 ${myPositions.length} 個部位 · ${totalContracts} 口`;
-    countBadge.className = "text-xs px-2.5 py-0.5 rounded-full font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40";
-
-    let grandTotalOpenNTD = 0;
-    let grandEstimatedProfitNTD = 0;
-
-    const cardsHTML = myPositions.map((pos, idx) => {
-        const contracts = parseInt(pos.contracts, 10) || 1;
-        let targetCycle = globalData?.cycles?.find(c => c.code === pos.cycle_code) || globalData?.cycles?.[0];
-        const dte = (targetCycle && targetCycle.display_days !== undefined) ? targetCycle.display_days : (targetCycle?.days_to_expiry || 7);
-        const currentOptions = targetCycle?.options || [];
-
-        // 取得 Call 側即時數據
-        let curCallNode = null;
-        let curCallDelta = 0;
-        let curCallAsk = 0;
-        let curCallBid = 0;
-        let callDist = 99;
-        let callBE = 0;
-
-        if (pos.has_call) {
-            curCallNode = currentOptions.find(o => o.strike === pos.call_strike)?.call || null;
-            curCallDelta = curCallNode ? curCallNode.delta : 0.18;
-            curCallAsk = curCallNode ? (curCallNode.ask > 0 ? curCallNode.ask : curCallNode.price) : 0;
-            curCallBid = curCallNode ? (curCallNode.bid > 0 ? curCallNode.bid : curCallNode.price) : 0;
-            if (F > 0) callDist = Number((((pos.call_strike - F) / F) * 100).toFixed(2));
-            callBE = Math.round(pos.call_strike + pos.call_premium);
-        }
-
-        // 取得 Put 側即時數據
-        let curPutNode = null;
-        let curPutDelta = 0;
-        let curPutAsk = 0;
-        let curPutBid = 0;
-        let putDist = 99;
-        let putBE = 0;
-
-        if (pos.has_put) {
-            curPutNode = currentOptions.find(o => o.strike === pos.put_strike)?.put || null;
-            curPutDelta = curPutNode ? curPutNode.delta : -0.18;
-            curPutAsk = curPutNode ? (curPutNode.ask > 0 ? curPutNode.ask : curPutNode.price) : 0;
-            curPutBid = curPutNode ? (curPutNode.bid > 0 ? curPutNode.bid : curPutNode.price) : 0;
-            if (F > 0) putDist = Number((((F - pos.put_strike) / F) * 100).toFixed(2));
-            putBE = Math.round(pos.put_strike - pos.put_premium);
-        }
-
-        // 總收益與成本計算
-        const singleOpenPremium = Math.round(((pos.has_call ? pos.call_premium : 0) + (pos.has_put ? pos.put_premium : 0)) * 10) / 10;
-        const totalCurrentCost = Math.round(((pos.has_call ? curCallAsk : 0) + (pos.has_put ? curPutAsk : 0)) * 10) / 10;
-        const profitHarvestedPct = singleOpenPremium > 0 ? Math.round(((singleOpenPremium - totalCurrentCost) / singleOpenPremium) * 100) : 0;
-        
-        const posOpenCashNTD = Math.round(singleOpenPremium * 50 * contracts);
-        const posUnrealizedPnlNTD = Math.round((singleOpenPremium - totalCurrentCost) * 50 * contracts);
-        grandTotalOpenNTD += posOpenCashNTD;
-        grandEstimatedProfitNTD += posUnrealizedPnlNTD;
-
-        // ==========================================
-        // 四大核心情境提醒規則引擎
-        // ==========================================
-        const isCallThreat = pos.has_call && (callDist < 1.0 || curCallDelta > 0.30);
-        const isPutThreat = pos.has_put && (putDist < 1.0 || curPutDelta < -0.30);
-
-        let scenario = null;
-
-        // 情境 4：雙賣中「安全側剩 0.2 點 (<=0.5 點)，危險側需平倉」
-        // 【單獨平倉危險側】直接單獨買回危險側！安全側留著讓系統免費結算。
-        if (pos.has_call && pos.has_put) {
-            if (isCallThreat && curPutAsk <= 0.5) {
-                scenario = {
-                    id: 4,
-                    badge: "🚨【單獨平倉危險側】",
-                    title: `Call 面臨突破危險 (Delta ${curCallDelta.toFixed(2)})，Put 安全側已歸零 (${curPutAsk.toFixed(1)} 點)`,
-                    desc: `行情急拉逼近上方 Call (${pos.call_strike}C)。下方 Put 權利金已收滿歸零，切勿整組雙向買回！**請直接「單獨買回平倉 Call 危險側」**，安全側 Put 放任自然結算省手續費！`,
-                    bgClass: "bg-rose-950/60 border-rose-500/80 text-rose-300",
-                    tagClass: "bg-rose-500 text-white font-bold"
-                };
-            } else if (isPutThreat && curCallAsk <= 0.5) {
-                scenario = {
-                    id: 4,
-                    badge: "🚨【單獨平倉危險側】",
-                    title: `Put 面臨跌破危險 (Delta ${curPutDelta.toFixed(2)})，Call 安全側已歸零 (${curCallAsk.toFixed(1)} 點)`,
-                    desc: `行情急殺逼近下方 Put (${pos.put_strike}P)。上方 Call 權利金已收滿歸零，切勿整組雙向買回！**請直接「單獨買回平倉 Put 危險側」**，安全側 Call 放任自然結算省手續費！`,
-                    bgClass: "bg-rose-950/60 border-rose-500/80 text-rose-300",
-                    tagClass: "bg-rose-500 text-white font-bold"
-                };
+            if (!myPositions || myPositions.length === 0) {
+                countBadge.innerText = "0 個部位";
+                countBadge.className = "text-xs px-2.5 py-0.5 rounded-full font-semibold bg-slate-800 text-slate-300 border border-slate-700";
+                if (summaryStats) {
+                    summaryStats.innerHTML = '<span class="text-slate-500">尚無即時部位</span>';
+                }
+                container.innerHTML = `
+                    <div class="p-8 text-center bg-slate-950/60 rounded-2xl border border-dashed border-slate-800">
+                        <div class="text-3xl mb-2">🎯</div>
+                        <div class="text-sm font-semibold text-slate-300">目前尚未建立任何實盤持倉部位</div>
+                        <p class="text-xs text-slate-500 mt-1 max-w-md mx-auto">點擊上方「➕ 新增實盤部位」自行填寫您的開倉口數與點數。系統將縱向列出所有週期合約，即時提供四大平倉防禦時機提醒！</p>
+                        <button onclick="openNewPositionModal()" class="mt-4 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white rounded-xl shadow transition">➕ 立即手動新增部位</button>
+                    </div>
+                `;
+                return;
             }
-        }
 
-        // 情境 2：其中一邊被行情逼近（距離 < 1.0% 或 Delta > 0.30）
-        // 提示【手動提前平倉 / 轉倉】
-        if (!scenario && (isCallThreat || isPutThreat)) {
-            const threatSide = isCallThreat ? `上方 Call @ ${pos.call_strike} (距離 +${callDist.toFixed(1)}%, Delta ${curCallDelta.toFixed(2)})` : `下方 Put @ ${pos.put_strike} (距離 -${putDist.toFixed(1)}%, Delta ${curPutDelta.toFixed(2)})`;
-            scenario = {
-                id: 2,
-                badge: "⚠️【手動提前平倉 / 轉倉】",
-                title: `${threatSide} 逼近防線，突破風險劇增！`,
-                desc: "現價逼近防守警戒線（距離 < 1.0% 或 Delta > 0.30），尾部 Gamma 爆發風險極高。**建議手動提前平倉，或同時間平移轉倉至次週合約**維持淨權利金流入！",
-                bgClass: "bg-amber-950/60 border-amber-500/80 text-amber-300",
-                tagClass: "bg-amber-500 text-black font-bold"
-            };
-        }
+            const totalContracts = myPositions.reduce((s, p) => s + (parseInt(p.contracts, 10) || 1), 0);
+            countBadge.innerText = `共 ${myPositions.length} 個部位 · ${totalContracts} 口`;
+            countBadge.className = "text-xs px-2.5 py-0.5 rounded-full font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40";
 
-        // 情境 1：雙邊都在深度價外（權利金已降至 0.1 ~ 0.5 點）
-        // 【放任等系統自動結算】不用手動平倉。直接放著讓系統自動結算。
-        if (!scenario) {
-            const allDeepOtm = (pos.has_call && pos.has_put)
-                ? (curCallAsk <= 0.5 && curPutAsk <= 0.5)
-                : (pos.has_call ? curCallAsk <= 0.5 : curPutAsk <= 0.5);
+            let grandTotalOpenNTD = 0;
+            let grandEstimatedProfitNTD = 0;
 
-            if (allDeepOtm) {
-                scenario = {
-                    id: 1,
-                    badge: "💤【放任等系統自動結算】",
-                    title: "雙邊合約均在深度價外，權利金降至 0.1 ~ 0.5 點",
-                    desc: "所有合約已幾乎完全融化歸零。**無須手動平倉買回**，直接放著讓系統自動結算，為您省下不必要的交易手續費與期交稅！",
-                    bgClass: "bg-emerald-950/40 border-emerald-500/50 text-emerald-300",
-                    tagClass: "bg-emerald-500/30 text-emerald-300 border border-emerald-500/50 font-bold"
-                };
-            }
-        }
+            const cardsHTML = myPositions.map((pos, idx) => {
+                const contracts = parseInt(pos.contracts, 10) || 1;
+                let targetCycle = globalData?.cycles?.find(c => c.code === pos.cycle_code) || globalData?.cycles?.[0];
+                const dte = (targetCycle && targetCycle.display_days !== undefined) ? targetCycle.display_days : (targetCycle?.days_to_expiry || 7);
+                const currentOptions = targetCycle?.options || [];
 
-        // 情境 3：結算前 1~2 天，權利金已收滿 80%（如 50 點剩 5 點）
-        // 提示【手動提前平倉鎖利】執行「80% 停利規則」。
-        if (!scenario && dte <= 2 && profitHarvestedPct >= 80) {
-            scenario = {
-                id: 3,
-                badge: "🎯【手動提前平倉鎖利】",
-                title: `執行「80% 停利規則」· 距離結算剩 ${dte} 天，利潤已收割 ${profitHarvestedPct}%`,
-                desc: `已開倉 ${singleOpenPremium} 點目前平倉僅需 ${totalCurrentCost.toFixed(1)} 點。到期前尾部 Gamma 劇烈波動不對稱，**建議立刻手動提前平倉鎖利**，獲利落袋為安！`,
-                bgClass: "bg-teal-950/60 border-teal-500/80 text-teal-300",
-                tagClass: "bg-teal-500 text-black font-bold"
-            };
-        }
+                // 取得 Call 側即時數據（Delta 一律轉為絕對值正數，距離取純正值）
+                let curCallNode = null;
+                let curCallDelta = 0;
+                let curCallAsk = 0;
+                let callDist = 99;
+                let callBE = 0;
 
-        // 常態情境：未觸發上述 4 大情境
-        if (!scenario) {
-            if (profitHarvestedPct >= 60) {
-                scenario = {
-                    id: 0,
-                    badge: "⏳【正常收租監控中】",
-                    title: `利潤收割率 ${profitHarvestedPct}% · 時間價值平穩流逝`,
-                    desc: `距離上方 Call 尚有 +${callDist.toFixed(1)}%，距離下方 Put 尚有 -${putDist.toFixed(1)}%，Delta 均在低風險區間，持續耐心持有賺取時間價值。`,
-                    bgClass: "bg-slate-900 border-slate-800 text-slate-300",
-                    tagClass: "bg-slate-800 text-slate-300 border border-slate-700"
-                };
-            } else {
-                scenario = {
-                    id: 0,
-                    badge: "🛡️【正常收租監控中】",
-                    title: `雙邊防禦安全 · 預估浮盈進度 ${profitHarvestedPct}%`,
-                    desc: `雙邊履約價距現價緩衝充裕，目前部位運作平穩，無需任何平倉或轉倉操作。`,
-                    bgClass: "bg-slate-900 border-slate-800 text-slate-300",
-                    tagClass: "bg-slate-800 text-slate-300 border border-slate-700"
-                };
-            }
-        }
+                if (pos.has_call) {
+                    curCallNode = currentOptions.find(o => o.strike === pos.call_strike)?.call || null;
+                    curCallDelta = curCallNode ? Math.abs(curCallNode.delta) : 0.18;
+                    curCallAsk = curCallNode ? (curCallNode.ask > 0 ? curCallNode.ask : curCallNode.price) : 0;
+                    if (F > 0) callDist = Number((Math.abs((pos.call_strike - F) / F) * 100).toFixed(2));
+                    callBE = Math.round(pos.call_strike + pos.call_premium);
+                }
 
-        // Call / Put 標註樣式
-        const callDistClass = callDist < 1.0 ? "text-rose-400 font-bold" : "text-slate-400";
-        const putDistClass = putDist < 1.0 ? "text-rose-400 font-bold" : "text-slate-400";
-        const callDeltaClass = curCallDelta > 0.30 ? "text-rose-400 font-bold" : "text-emerald-400";
-        const putDeltaClass = curPutDelta < -0.30 ? "text-rose-400 font-bold" : "text-rose-400";
+                // 取得 Put 側即時數據（Delta 一律轉為絕對值正數，距離取純正值）
+                let curPutNode = null;
+                let curPutDelta = 0;
+                let curPutAsk = 0;
+                let putDist = 99;
+                let putBE = 0;
 
-        return `
-            <div class="bg-slate-950/90 border border-slate-800/90 rounded-2xl p-4 shadow-lg transition hover:border-slate-700">
-                <!-- 卡片頂部：部位識別、週期、口數與操作按鈕 -->
-                <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800/70">
-                    <div class="flex items-center gap-2">
-                        <span class="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-800 text-amber-300 border border-slate-700">#${idx + 1}</span>
-                        <span class="text-xs font-bold px-2.5 py-0.5 rounded-lg bg-emerald-950 text-emerald-300 border border-emerald-800">${pos.cycle_label || pos.cycle_code}</span>
-                        <span class="text-xs text-slate-400 font-mono">剩 ${dte} 天到期 (${targetCycle?.expiry_date ? targetCycle.expiry_date.slice(5) : ''})</span>
-                        <span class="text-xs px-2 py-0.5 rounded bg-slate-900 text-slate-300 font-mono border border-slate-800">${contracts} 口</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <button onclick="openEditPositionModal(${idx})" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 text-xs transition flex items-center gap-1">
-                            <span>✏️</span> <span>編輯</span>
-                        </button>
-                        <button onclick="deletePosition(${idx})" class="px-2.5 py-1 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-rose-100 rounded-lg border border-rose-800/50 text-xs transition flex items-center gap-1">
-                            <span>🗑️</span> <span>平倉</span>
-                        </button>
-                    </div>
-                </div>
+                if (pos.has_put) {
+                    curPutNode = currentOptions.find(o => o.strike === pos.put_strike)?.put || null;
+                    curPutDelta = curPutNode ? Math.abs(curPutNode.delta) : 0.18;
+                    curPutAsk = curPutNode ? (curPutNode.ask > 0 ? curPutNode.ask : curPutNode.price) : 0;
+                    if (F > 0) putDist = Number((Math.abs((F - pos.put_strike) / F) * 100).toFixed(2));
+                    putBE = Math.round(pos.put_strike - pos.put_premium);
+                }
 
-                <!-- 核心決策情境提醒橫幅 (四大情境) -->
-                <div class="mt-3 p-3 rounded-xl border ${scenario.bgClass} flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-                    <div class="space-y-0.5">
-                        <div class="flex items-center gap-2">
-                            <span class="text-xs px-2 py-0.5 rounded ${scenario.tagClass}">${scenario.badge}</span>
-                            <strong class="text-xs md:text-sm">${scenario.title}</strong>
-                        </div>
-                        <p class="text-xs opacity-90 pl-1">${scenario.desc}</p>
-                    </div>
-                </div>
+                // 總收益與成本計算
+                const singleOpenPremium = Math.round(((pos.has_call ? pos.call_premium : 0) + (pos.has_put ? pos.put_premium : 0)) * 10) / 10;
+                const totalCurrentCost = Math.round(((pos.has_call ? curCallAsk : 0) + (pos.has_put ? curPutAsk : 0)) * 10) / 10;
+                const profitHarvestedPct = singleOpenPremium > 0 ? Math.round(((singleOpenPremium - totalCurrentCost) / singleOpenPremium) * 100) : 0;
+                
+                const posOpenCashNTD = Math.round(singleOpenPremium * 50 * contracts);
+                const posUnrealizedPnlNTD = Math.round((singleOpenPremium - totalCurrentCost) * 50 * contracts);
+                grandTotalOpenNTD += posOpenCashNTD;
+                grandEstimatedProfitNTD += posUnrealizedPnlNTD;
 
-                <!-- 三欄數據面板 (Call 左邊，Strike/綜合 中間，Put 右邊) -->
-                <div class="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 items-stretch">
-                    <!-- Call 側 (左邊) -->
-                    <div class="bg-slate-900/80 p-3.5 rounded-xl border border-slate-800/90 flex flex-col justify-between">
-                        <div class="flex justify-between items-center text-xs">
-                            <span class="flex items-center gap-1.5 text-emerald-400 font-semibold"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span>上方 CC (賣出 Call)</span>
-                            <span class="font-mono ${callDeltaClass}">${pos.has_call ? 'Delta: ' + curCallDelta.toFixed(2) : '--'}</span>
-                        </div>
-                        <div class="my-2 flex items-baseline justify-between">
-                            <div class="text-xl font-black font-mono text-white">${pos.has_call ? pos.call_strike + ' C' : '未建倉 (空)'}</div>
-                            <div class="text-xs font-mono ${callDistClass}">${pos.has_call ? '距現價 +' + callDist.toFixed(2) + '%' : '--'}</div>
-                        </div>
-                        <div class="text-[11px] text-slate-400 pt-2 border-t border-slate-800 flex justify-between font-mono">
-                            <span>開倉: <span class="text-slate-200 font-semibold">${pos.has_call ? pos.call_premium + ' 點' : '--'}</span></span>
-                            <span>現價Ask: <span class="${curCallAsk <= 0.5 ? 'text-cyan-400 font-bold' : 'text-slate-300'}">${pos.has_call ? (curCallAsk > 0 ? curCallAsk + ' 點' : '-') : '--'}</span></span>
-                            <span class="text-emerald-400/90">兩平: ${pos.has_call ? callBE : '--'}</span>
-                        </div>
-                    </div>
+                // ==========================================
+                // 四大核心情境提醒規則引擎（極簡明瞭、直指動作）
+                // ==========================================
+                const isCallThreat = pos.has_call && (curCallDelta > 0.30 || callDist < 1.0);
+                const isPutThreat = pos.has_put && (curPutDelta > 0.30 || putDist < 1.0);
 
-                    <!-- 中間：綜合收益與平倉指標 -->
-                    <div class="bg-slate-900/80 p-3.5 rounded-xl border border-slate-800/90 flex flex-col justify-between text-center">
-                        <div>
-                            <div class="text-xs text-slate-400">已開倉總收租 (${contracts} 口)</div>
-                            <div class="text-2xl font-black font-mono text-amber-400 mt-0.5">${singleOpenPremium} <span class="text-xs font-normal text-slate-400">點 / 口</span></div>
-                            <div class="text-xs text-slate-300 font-mono">總收租 NT$ ${posOpenCashNTD.toLocaleString()}</div>
-                        </div>
-                        <div class="mt-2 pt-2 border-t border-slate-800 text-xs font-mono flex justify-around">
-                            <div>
-                                <div class="text-[10px] text-slate-500">平倉代價</div>
-                                <div class="text-slate-200 font-bold">${totalCurrentCost.toFixed(1)} 點</div>
+                let scenario = null;
+
+                // 情境 4：雙賣中「安全側剩 0.2 點 (<=0.5 點)，危險側需平倉」
+                // 【單獨平倉危險側】直接單獨買回危險側！安全側留著讓系統免費結算。
+                if (pos.has_call && pos.has_put) {
+                    if (isCallThreat && curPutAsk <= 0.5) {
+                        const threatReason = curCallDelta > 0.30 ? `Delta ${curCallDelta.toFixed(2)} > 0.30` : `距現價 ${callDist.toFixed(1)}% < 1.0%`;
+                        scenario = {
+                            id: 4,
+                            badge: "🚨【單獨平倉危險側】",
+                            title: `上方 Call @ ${pos.call_strike} ${threatReason}（下方 Put 僅剩 ${curPutAsk.toFixed(1)} 點安全歸零）`,
+                            action: `👉 動作建議：直接單獨買回平倉 ${pos.call_strike}C 危險側！安全側 Put 放任自然結算省手續費`,
+                            bgClass: "bg-rose-950/60 border-rose-500/80 text-rose-300",
+                            tagClass: "bg-rose-500 text-white font-bold"
+                        };
+                    } else if (isPutThreat && curCallAsk <= 0.5) {
+                        const threatReason = curPutDelta > 0.30 ? `Delta ${curPutDelta.toFixed(2)} > 0.30` : `距現價 ${putDist.toFixed(1)}% < 1.0%`;
+                        scenario = {
+                            id: 4,
+                            badge: "🚨【單獨平倉危險側】",
+                            title: `下方 Put @ ${pos.put_strike} ${threatReason}（上方 Call 僅剩 ${curCallAsk.toFixed(1)} 點安全歸零）`,
+                            action: `👉 動作建議：直接單獨買回平倉 ${pos.put_strike}P 危險側！安全側 Call 放任自然結算省手續費`,
+                            bgClass: "bg-rose-950/60 border-rose-500/80 text-rose-300",
+                            tagClass: "bg-rose-500 text-white font-bold"
+                        };
+                    }
+                }
+
+                // 情境 2：其中一邊被行情逼近（Delta > 0.30 或 距離 < 1.0%）
+                // 提示【手動提前平倉 / 轉倉】
+                if (!scenario && (isCallThreat || isPutThreat)) {
+                    let sideText = "";
+                    let triggerCond = "";
+                    if (isCallThreat) {
+                        sideText = `上方 Call @ ${pos.call_strike}`;
+                        triggerCond = curCallDelta > 0.30 ? `Delta ${curCallDelta.toFixed(2)} > 0.30 (距現價 ${callDist.toFixed(1)}%)` : `距現價僅 ${callDist.toFixed(1)}% < 1.0% (Delta ${curCallDelta.toFixed(2)})`;
+                    } else {
+                        sideText = `下方 Put @ ${pos.put_strike}`;
+                        triggerCond = curPutDelta > 0.30 ? `Delta ${curPutDelta.toFixed(2)} > 0.30 (距現價 ${putDist.toFixed(1)}%)` : `距現價僅 ${putDist.toFixed(1)}% < 1.0% (Delta ${curPutDelta.toFixed(2)})`;
+                    }
+
+                    scenario = {
+                        id: 2,
+                        badge: "⚠️【手動提前平倉 / 轉倉】",
+                        title: `${sideText} ${triggerCond}`,
+                        action: "👉 動作建議：立即手動買回平倉，或同時間平移向次週轉倉 (Roll Over) 維持淨收租",
+                        bgClass: "bg-amber-950/60 border-amber-500/80 text-amber-300",
+                        tagClass: "bg-amber-500 text-black font-bold"
+                    };
+                }
+
+                // 情境 1：雙邊都在深度價外（權利金已降至 0.1 ~ 0.5 點）
+                // 【放任等系統自動結算】不用手動平倉。直接放著讓系統自動結算。
+                if (!scenario) {
+                    const allDeepOtm = (pos.has_call && pos.has_put)
+                        ? (curCallAsk <= 0.5 && curPutAsk <= 0.5)
+                        : (pos.has_call ? curCallAsk <= 0.5 : curPutAsk <= 0.5);
+
+                    if (allDeepOtm) {
+                        scenario = {
+                            id: 1,
+                            badge: "💤【放任等系統自動結算】",
+                            title: "雙邊合約均在深度價外，權利金已降至 ≤ 0.5 點",
+                            action: "👉 動作建議：不用手動平倉掛單，放任等交易所自然到期歸零結算，省交易手續費",
+                            bgClass: "bg-emerald-950/40 border-emerald-500/50 text-emerald-300",
+                            tagClass: "bg-emerald-500/30 text-emerald-300 border border-emerald-500/50 font-bold"
+                        };
+                    }
+                }
+
+                // 情境 3：結算前 1~2 天，權利金已收滿 80%（如 50 點剩 5 點）
+                // 提示【手動提前平倉鎖利】執行「80% 停利規則」。
+                if (!scenario && dte <= 2 && profitHarvestedPct >= 80) {
+                    scenario = {
+                        id: 3,
+                        badge: "🎯【手動提前平倉鎖利】",
+                        title: `結算前剩 ${dte} 天 · 權利金已收割 ${profitHarvestedPct}% (≥ 80% 停利標準)`,
+                        action: `👉 動作建議：開倉 ${singleOpenPremium} 點目前平倉僅需 ${totalCurrentCost.toFixed(1)} 點，建議提前手動平倉鎖利落袋`,
+                        bgClass: "bg-teal-950/60 border-teal-500/80 text-teal-300",
+                        tagClass: "bg-teal-500 text-black font-bold"
+                    };
+                }
+
+                // 常態情境：未觸發上述 4 大情境
+                if (!scenario) {
+                    scenario = {
+                        id: 0,
+                        badge: "🛡️【正常收租監控中】",
+                        title: `雙邊防禦安全 · 獲利收割率 ${profitHarvestedPct}%`,
+                        action: `👉 狀態說明：距離上方 Call 尚有 ${callDist.toFixed(1)}%，距離下方 Put 尚有 ${putDist.toFixed(1)}%，Delta 均在低風險區間，持續持有賺取時間價值`,
+                        bgClass: "bg-slate-900 border-slate-800 text-slate-300",
+                        tagClass: "bg-slate-800 text-slate-300 border border-slate-700"
+                    };
+                }
+
+                // Call / Put 標註樣式
+                const callDistClass = callDist < 1.0 ? "text-rose-400 font-bold" : "text-slate-400";
+                const putDistClass = putDist < 1.0 ? "text-rose-400 font-bold" : "text-slate-400";
+                const callDeltaClass = curCallDelta > 0.30 ? "text-rose-400 font-bold" : "text-emerald-400";
+                const putDeltaClass = curPutDelta > 0.30 ? "text-rose-400 font-bold" : "text-rose-400";
+
+                return `
+                    <div class="bg-slate-950/90 border border-slate-800/90 rounded-2xl p-4 shadow-lg transition hover:border-slate-700">
+                        <!-- 卡片頂部：部位識別、週期、口數與操作按鈕 -->
+                        <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800/70">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-800 text-amber-300 border border-slate-700">#${idx + 1}</span>
+                                <span class="text-xs font-bold px-2.5 py-0.5 rounded-lg bg-emerald-950 text-emerald-300 border border-emerald-800">${pos.cycle_label || pos.cycle_code}</span>
+                                <span class="text-xs text-slate-400 font-mono">剩 ${dte} 天到期 (${targetCycle?.expiry_date ? targetCycle.expiry_date.slice(5) : ''})</span>
+                                <span class="text-xs px-2 py-0.5 rounded bg-slate-900 text-slate-300 font-mono border border-slate-800">${contracts} 口</span>
                             </div>
-                            <div>
-                                <div class="text-[10px] text-slate-500">利潤收割率</div>
-                                <div class="${profitHarvestedPct >= 80 ? 'text-teal-300 font-bold' : (profitHarvestedPct >= 60 ? 'text-emerald-400 font-bold' : 'text-slate-300')}">${profitHarvestedPct}%</div>
-                            </div>
-                            <div>
-                                <div class="text-[10px] text-slate-500">預估浮動損益</div>
-                                <div class="${posUnrealizedPnlNTD >= 0 ? 'text-emerald-400' : 'text-rose-400'} font-bold">${posUnrealizedPnlNTD >= 0 ? '+' : ''}NT$ ${posUnrealizedPnlNTD.toLocaleString()}</div>
+                            <div class="flex items-center gap-2">
+                                <button onclick="openEditPositionModal(${idx})" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 text-xs transition flex items-center gap-1">
+                                    <span>✏️</span> <span>編輯</span>
+                                </button>
+                                <button onclick="deletePosition(${idx})" class="px-2.5 py-1 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-rose-100 rounded-lg border border-rose-800/50 text-xs transition flex items-center gap-1">
+                                    <span>🗑️</span> <span>平倉</span>
+                                </button>
                             </div>
                         </div>
+
+                        <!-- 核心決策情境提醒橫幅 (極簡高信噪比：條件 + 動作) -->
+                        <div class="mt-3 p-3 rounded-xl border ${scenario.bgClass}">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="text-xs px-2 py-0.5 rounded ${scenario.tagClass}">${scenario.badge}</span>
+                                <strong class="text-xs md:text-sm">${scenario.title}</strong>
+                            </div>
+                            <div class="text-xs mt-1.5 opacity-90 font-medium pl-0.5">${scenario.action}</div>
+                        </div>
+
+                        <!-- 三欄數據面板 (Call 左邊，Strike/綜合 中間，Put 右邊) -->
+                        <div class="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 items-stretch">
+                            <!-- Call 側 (左邊) -->
+                            <div class="bg-slate-900/80 p-3.5 rounded-xl border border-slate-800/90 flex flex-col justify-between">
+                                <div class="flex justify-between items-center text-xs">
+                                    <span class="flex items-center gap-1.5 text-emerald-400 font-semibold"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span>上方 CC (賣出 Call)</span>
+                                    <span class="font-mono ${callDeltaClass}">${pos.has_call ? 'Delta: ' + curCallDelta.toFixed(2) : '--'}</span>
+                                </div>
+                                <div class="my-2 flex items-baseline justify-between">
+                                    <div class="text-xl font-black font-mono text-white">${pos.has_call ? pos.call_strike + ' C' : '未建倉 (空)'}</div>
+                                    <div class="text-xs font-mono ${callDistClass}">${pos.has_call ? '距現價 ' + callDist.toFixed(2) + '%' : '--'}</div>
+                                </div>
+                                <div class="text-[11px] text-slate-400 pt-2 border-t border-slate-800 flex justify-between font-mono">
+                                    <span>開倉: <span class="text-slate-200 font-semibold">${pos.has_call ? pos.call_premium + ' 點' : '--'}</span></span>
+                                    <span>現價Ask: <span class="${curCallAsk <= 0.5 ? 'text-cyan-400 font-bold' : 'text-slate-300'}">${pos.has_call ? (curCallAsk > 0 ? curCallAsk + ' 點' : '-') : '--'}</span></span>
+                                    <span class="text-emerald-400/90">兩平: ${pos.has_call ? callBE : '--'}</span>
+                                </div>
+                            </div>
+
+                            <!-- 中間：綜合收益與平倉指標 -->
+                            <div class="bg-slate-900/80 p-3.5 rounded-xl border border-slate-800/90 flex flex-col justify-between text-center">
+                                <div>
+                                    <div class="text-xs text-slate-400">已開倉總收租 (${contracts} 口)</div>
+                                    <div class="text-2xl font-black font-mono text-amber-400 mt-0.5">${singleOpenPremium} <span class="text-xs font-normal text-slate-400">點 / 口</span></div>
+                                    <div class="text-xs text-slate-300 font-mono">總收租 NT$ ${posOpenCashNTD.toLocaleString()}</div>
+                                </div>
+                                <div class="mt-2 pt-2 border-t border-slate-800 text-xs font-mono flex justify-around">
+                                    <div>
+                                        <div class="text-[10px] text-slate-500">平倉代價</div>
+                                        <div class="text-slate-200 font-bold">${totalCurrentCost.toFixed(1)} 點</div>
+                                    </div>
+                                    <div>
+                                        <div class="text-[10px] text-slate-500">利潤收割率</div>
+                                        <div class="${profitHarvestedPct >= 80 ? 'text-teal-300 font-bold' : (profitHarvestedPct >= 60 ? 'text-emerald-400 font-bold' : (profitHarvestedPct < 0 ? 'text-rose-400' : 'text-slate-300'))}">${profitHarvestedPct}%</div>
+                                    </div>
+                                    <div>
+                                        <div class="text-[10px] text-slate-500">預估浮動損益</div>
+                                        <div class="${posUnrealizedPnlNTD >= 0 ? 'text-emerald-400' : 'text-rose-400'} font-bold">${posUnrealizedPnlNTD >= 0 ? '+' : ''}NT$ ${posUnrealizedPnlNTD.toLocaleString()}</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Put 側 (右邊) -->
+                            <div class="bg-slate-900/80 p-3.5 rounded-xl border border-slate-800/90 flex flex-col justify-between">
+                                <div class="flex justify-between items-center text-xs">
+                                    <span class="flex items-center gap-1.5 text-rose-400 font-semibold"><span class="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block"></span>下方 CSP (賣出 Put)</span>
+                                    <span class="font-mono ${putDeltaClass}">${pos.has_put ? 'Delta: ' + curPutDelta.toFixed(2) : '--'}</span>
+                                </div>
+                                <div class="my-2 flex items-baseline justify-between">
+                                    <div class="text-xl font-black font-mono text-white">${pos.has_put ? pos.put_strike + ' P' : '未建倉 (空)'}</div>
+                                    <div class="text-xs font-mono ${putDistClass}">${pos.has_put ? '距現價 ' + putDist.toFixed(2) + '%' : '--'}</div>
+                                </div>
+                                <div class="text-[11px] text-slate-400 pt-2 border-t border-slate-800 flex justify-between font-mono">
+                                    <span>開倉: <span class="text-slate-200 font-semibold">${pos.has_put ? pos.put_premium + ' 點' : '--'}</span></span>
+                                    <span>現價Ask: <span class="${curPutAsk <= 0.5 ? 'text-cyan-400 font-bold' : 'text-slate-300'}">${pos.has_put ? (curPutAsk > 0 ? curPutAsk + ' 點' : '-') : '--'}</span></span>
+                                    <span class="text-rose-400/90">兩平: ${pos.has_put ? putBE : '--'}</span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
+                `;
+            }).join("");
 
-                    <!-- Put 側 (右邊) -->
-                    <div class="bg-slate-900/80 p-3.5 rounded-xl border border-slate-800/90 flex flex-col justify-between">
-                        <div class="flex justify-between items-center text-xs">
-                            <span class="flex items-center gap-1.5 text-rose-400 font-semibold"><span class="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block"></span>下方 CSP (賣出 Put)</span>
-                            <span class="font-mono ${putDeltaClass}">${pos.has_put ? 'Delta: ' + curPutDelta.toFixed(2) : '--'}</span>
-                        </div>
-                        <div class="my-2 flex items-baseline justify-between">
-                            <div class="text-xl font-black font-mono text-white">${pos.has_put ? pos.put_strike + ' P' : '未建倉 (空)'}</div>
-                            <div class="text-xs font-mono ${putDistClass}">${pos.has_put ? '距現價 -' + putDist.toFixed(2) + '%' : '--'}</div>
-                        </div>
-                        <div class="text-[11px] text-slate-400 pt-2 border-t border-slate-800 flex justify-between font-mono">
-                            <span>開倉: <span class="text-slate-200 font-semibold">${pos.has_put ? pos.put_premium + ' 點' : '--'}</span></span>
-                            <span>現價Ask: <span class="${curPutAsk <= 0.5 ? 'text-cyan-400 font-bold' : 'text-slate-300'}">${pos.has_put ? (curPutAsk > 0 ? curPutAsk + ' 點' : '-') : '--'}</span></span>
-                            <span class="text-rose-400/90">兩平: ${pos.has_put ? putBE : '--'}</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-    }).join("");
+            container.innerHTML = cardsHTML;
 
-    container.innerHTML = cardsHTML;
-
-    if (summaryStats) {
-        summaryStats.innerHTML = `
-            <span>總收租: <strong class="text-amber-400">NT$ ${grandTotalOpenNTD.toLocaleString()}</strong></span>
-            <span>·</span>
-            <span>預估浮盈: <strong class="${grandEstimatedProfitNTD >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${grandEstimatedProfitNTD >= 0 ? '+' : ''}NT$ ${grandEstimatedProfitNTD.toLocaleString()}</strong></span>
-        `;
-    }
-}
-
-
-        function recalcCapital() {
-            const contracts = parseInt(document.getElementById("calc-contracts").value, 10) || 1;
-            const cycle = globalData?.cycles?.[activeCycleIndex];
-            const opt = cycle?.strategy?.optimal;
-
-            if (!opt) return;
-
-            const singleCspCash = opt.put.strike * 50;
-            const totalCspCash = singleCspCash * contracts;
-            document.getElementById("calc-csp-cash").innerText = `NT$ ${totalCspCash.toLocaleString()}`;
-
-            const singleIncome = opt.total_premium_ntd;
-            const totalIncome = singleIncome * contracts;
-            document.getElementById("calc-total-income").innerText = `NT$ ${totalIncome.toLocaleString()}`;
-
-            const weeklyRoi = ((totalIncome / totalCspCash) * 100).toFixed(2);
-            document.getElementById("calc-weekly-roi").innerText = `${weeklyRoi}%`;
-
-            const dte = Math.max(1, cycle.display_days || cycle.days_to_expiry);
-            const annualYield = ((parseFloat(weeklyRoi) * (365 / dte))).toFixed(1);
-            document.getElementById("calc-annual-yield").innerText = `${annualYield}%`;
-
-            const F = globalData?.futures_price || 22500;
-            const txoContractValue = F * 50;
-
-            const p631 = globalData?.etf_prices?.["00631L"] || 36.6;
-            const s631 = parseFloat(document.getElementById("calc-631-shares").value) || 0;
-            const val631 = s631 * p631;
-            document.getElementById("calc-631-market-val").innerText = `NT$ ${Math.round(val631).toLocaleString()}`;
-            const covered631 = ((val631 * 2) / txoContractValue).toFixed(1);
-            document.getElementById("calc-631-covered-contracts").innerText = `${covered631} 口 (${s631 >= contracts * 15000 ? "足額對沖 ✅" : "部分覆蓋"})`;
-
-            const p685 = globalData?.etf_prices?.["00685L"] || 12.1;
-            const s685 = parseFloat(document.getElementById("calc-685-shares").value) || 0;
-            const val685 = s685 * p685;
-            document.getElementById("calc-685-market-val").innerText = `NT$ ${Math.round(val685).toLocaleString()}`;
-            const covered685 = ((val685 * 2) / txoContractValue).toFixed(1);
-            document.getElementById("calc-685-covered-contracts").innerText = `${covered685} 口`;
+            if (summaryStats) {
+                summaryStats.innerHTML = `
+                    <span>總收租: <strong class="text-amber-400">NT$ ${grandTotalOpenNTD.toLocaleString()}</strong></span>
+                    <span>·</span>
+                    <span>預估浮盈: <strong class="${grandEstimatedProfitNTD >= 0 ? 'text-emerald-400' : 'text-rose-400'}">${grandEstimatedProfitNTD >= 0 ? '+' : ''}NT$ ${grandEstimatedProfitNTD.toLocaleString()}</strong></span>
+                `;
+            }
         }
 
         window.addEventListener("DOMContentLoaded", () => {
