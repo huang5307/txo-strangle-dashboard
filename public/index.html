@@ -63,7 +63,7 @@
                 <div>
                     <div class="flex items-center gap-2">
                         <h1 class="text-lg md:text-2xl font-black text-white tracking-tight">TXO 備兌賣出勒式策略量化雷達</h1>
-                        <span class="px-2 py-0.5 rounded text-[10px] md:text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Covered Strangle v3.2-Live</span>
+                        <span class="px-2 py-0.5 rounded text-[10px] md:text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Covered Strangle v3.3-MultiPos</span>
                     </div>
                     <p class="text-xs md:text-sm text-slate-400 mt-0.5">上方 Covered Call (現貨覆蓋) + 下方 Cash-Secured Put (年線支撐) + 單/雙邊持倉動態監控</p>
                 </div>
@@ -144,13 +144,21 @@
                 </div>
 
                 <div class="flex items-center gap-2">
-                    <button onclick="togglePositionEditModal()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 font-medium rounded-xl border border-slate-700 flex items-center gap-1.5 transition">
-                        <span>✏️ 自訂/更新持倉</span>
+                    <button onclick="openNewPositionModal()" class="px-3 py-1.5 bg-emerald-600/90 hover:bg-emerald-500 text-xs text-white font-semibold rounded-xl shadow-md transition flex items-center gap-1">
+                        <span>➕</span> <span>新增部位</span>
                     </button>
-                    <button onclick="clearPosition()" class="px-2.5 py-1.5 bg-slate-800/60 hover:bg-red-950/60 text-xs text-slate-400 hover:text-red-400 rounded-xl border border-slate-700/60 transition">
-                        清空
+                    <button onclick="openEditCurrentPositionModal()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 font-medium rounded-xl border border-slate-700 flex items-center gap-1 transition">
+                        <span>✏️ 編輯當前部位</span>
+                    </button>
+                    <button onclick="deleteCurrentPosition()" class="px-2.5 py-1.5 bg-slate-800/60 hover:bg-red-950/60 text-xs text-slate-400 hover:text-red-400 rounded-xl border border-slate-700/60 transition" title="關閉/平倉當前部位">
+                        平倉刪除
                     </button>
                 </div>
+            </div>
+
+            <!-- 多持倉部位切換列 (支援跨週期與同週期多部位) -->
+            <div class="mt-3 flex items-center space-x-2 overflow-x-auto pb-1 no-scrollbar" id="position-tabs-bar">
+                <!-- 動態生成部位 Tabs -->
             </div>
 
             <!-- 持倉卡片 (動態支援：雙向、單邊Put、單邊Call、未建倉) -->
@@ -517,6 +525,20 @@
             </p>
 
             <div class="space-y-4">
+                <!-- 週期與口數設定 -->
+                <div class="grid grid-cols-2 gap-3 p-3 bg-slate-950 rounded-2xl border border-slate-800">
+                    <div>
+                        <label class="text-[11px] text-slate-400 font-semibold">所屬合約週期</label>
+                        <select id="modal-cycle-select" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-white font-mono text-xs focus:border-emerald-500 focus:outline-none">
+                            <!-- 動態填入合約週期 -->
+                        </select>
+                    </div>
+                    <div>
+                        <label class="text-[11px] text-slate-400 font-semibold">持倉口數 (Contracts)</label>
+                        <input id="modal-contracts" type="number" min="1" step="1" value="1" class="w-full mt-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-white font-mono text-xs focus:border-emerald-500 focus:outline-none">
+                    </div>
+                </div>
+
                 <!-- Put 區塊 -->
                 <div class="p-3 bg-slate-950 rounded-2xl border border-rose-900/40">
                     <div class="text-xs font-bold text-rose-400 mb-2 flex items-center justify-between">
@@ -567,26 +589,42 @@
         let activeCycleIndex = 0;
         let countdownTimer = 60;
         let countdownInterval = null;
-        let activePosition = null; // 當前監控持倉 (可為雙邊、單邊Put、單邊Call)
+        let myPositions = []; // 支援多持倉部位清單 (跨週期/同週期多部位)
+        let activePosIdx = 0; // 當前檢視的部位索引
+        let editingPosIdx = -1; // 當前編輯的部位索引，-1 為新增
         let recommendedCompLeg = null; // 當單邊時，系統推薦配對的另一側
 
-        function loadStoredPosition() {
+        function loadStoredPositions() {
             try {
-                const stored = localStorage.getItem("txo_active_strangle_pos_v2");
+                const stored = localStorage.getItem("txo_my_positions_v4");
                 if (stored) {
-                    activePosition = JSON.parse(stored);
+                    myPositions = JSON.parse(stored);
+                } else {
+                    const old = localStorage.getItem("txo_active_strangle_pos_v2");
+                    if (old) {
+                        const parsed = JSON.parse(old);
+                        parsed.id = "pos_" + Date.now();
+                        parsed.contracts = 1;
+                        if (!parsed.cycle_code || parsed.cycle_code === "自訂") {
+                            parsed.cycle_code = globalData?.cycles?.[0]?.code || "202611F1";
+                            parsed.cycle_label = globalData?.cycles?.[0]?.label || "近週";
+                        }
+                        myPositions = [parsed];
+                    }
+                }
+                if (activePosIdx >= myPositions.length) {
+                    activePosIdx = Math.max(0, myPositions.length - 1);
                 }
             } catch (e) {
-                console.warn("Failed to load stored position:", e);
+                console.warn("Failed to load stored positions:", e);
             }
         }
 
-        function saveStoredPosition(pos) {
-            activePosition = pos;
-            if (pos) {
-                localStorage.setItem("txo_active_strangle_pos_v2", JSON.stringify(pos));
-            } else {
-                localStorage.removeItem("txo_active_strangle_pos_v2");
+        function saveStoredPositions() {
+            try {
+                localStorage.setItem("txo_my_positions_v4", JSON.stringify(myPositions));
+            } catch (e) {
+                console.warn("Failed to save positions:", e);
             }
             renderPositionMonitor();
         }
@@ -875,63 +913,127 @@
         }
 
         // ==========================================
-        // 持倉即時監控、平倉止盈時機與單邊配對核心
+        // 持倉即時監控、多部位管理與平倉/轉倉核心
         // ==========================================
 
-        function applyOptimalToPosition(mode = 'both') {
-            const cycle = globalData.cycles?.[activeCycleIndex];
-            const opt = cycle?.strategy?.optimal;
-            if (!opt) return;
+        function renderPositionTabs() {
+            const bar = document.getElementById("position-tabs-bar");
+            if (!bar) return;
+            if (!myPositions || myPositions.length === 0) {
+                bar.innerHTML = `<div class="text-xs text-slate-500 py-1 flex items-center gap-1.5 font-mono"><span>📌 尚未建立任何持倉部位</span><span class="text-slate-600">· 點擊右上角「➕ 新增部位」或由下方量化組合一鍵帶入</span></div>`;
+                return;
+            }
 
-            const pos = {
-                cycle_code: cycle.code,
-                cycle_label: cycle.label,
-                has_put: mode === 'both' || mode === 'put_only',
-                has_call: mode === 'both' || mode === 'call_only',
-                put_strike: (mode === 'both' || mode === 'put_only') ? opt.put.strike : null,
-                put_premium: (mode === 'both' || mode === 'put_only') ? opt.put.bid : 0,
-                call_strike: (mode === 'both' || mode === 'call_only') ? opt.call.strike : null,
-                call_premium: (mode === 'both' || mode === 'call_only') ? opt.call.bid : 0,
-            };
+            const totalContracts = myPositions.reduce((sum, p) => sum + (parseInt(p.contracts, 10) || 1), 0);
 
-            saveStoredPosition(pos);
+            bar.innerHTML = myPositions.map((pos, idx) => {
+                const isActive = idx === activePosIdx;
+                let legsDesc = "";
+                if (pos.has_put && pos.has_call) legsDesc = `${pos.put_strike}P / ${pos.call_strike}C`;
+                else if (pos.has_put) legsDesc = `${pos.put_strike}P (CSP)`;
+                else if (pos.has_call) legsDesc = `${pos.call_strike}C (CC)`;
+
+                const activeClass = "bg-emerald-600 text-white font-bold shadow-md shadow-emerald-900/50 border-emerald-400";
+                const inactiveClass = "bg-slate-950/80 text-slate-400 hover:text-slate-200 border-slate-800 hover:border-slate-700";
+
+                return `
+                    <button onclick="selectPosition(${idx})" class="px-3 py-1.5 rounded-xl text-xs border transition whitespace-nowrap shrink-0 flex items-center gap-1.5 ${isActive ? activeClass : inactiveClass}">
+                        <span class="font-mono text-[11px] opacity-80">#${idx + 1}</span>
+                        <span class="font-semibold">${pos.cycle_label || pos.cycle_code}</span>
+                        <span class="font-mono ${isActive ? 'text-amber-200' : 'text-slate-300'}">${legsDesc}</span>
+                        <span class="text-[10px] px-1.5 py-0.2 rounded font-mono ${isActive ? 'bg-emerald-700/80 text-emerald-100' : 'bg-slate-800 text-slate-400'}">${pos.contracts || 1}口</span>
+                    </button>
+                `;
+            }).join("") + `
+                <div class="ml-auto pl-2 shrink-0 text-[11px] text-slate-400 font-mono hidden md:flex items-center gap-1">
+                    <span>總計 ${myPositions.length} 部位</span>
+                    <span>·</span>
+                    <span class="text-emerald-400 font-bold">${totalContracts} 口合約</span>
+                </div>
+            `;
         }
 
-        function applySpecificCombo(cycleIdx, comboIdx) {
-            const cycle = globalData.cycles?.[cycleIdx];
-            const alt = cycle?.strategy?.alternatives?.[comboIdx - 1];
-            if (!alt) return;
-
-            const pos = {
-                cycle_code: cycle.code,
-                cycle_label: cycle.label,
-                has_put: true,
-                has_call: true,
-                put_strike: alt.put.strike,
-                put_premium: alt.put.bid,
-                call_strike: alt.call.strike,
-                call_premium: alt.call.bid,
-            };
-
-            saveStoredPosition(pos);
+        function selectPosition(idx) {
+            activePosIdx = idx;
+            renderPositionMonitor();
         }
 
-        function clearPosition() {
-            saveStoredPosition(null);
+        function openNewPositionModal() {
+            editingPosIdx = -1;
+            const modal = document.getElementById("position-modal");
+            const cycleSelect = document.getElementById("modal-cycle-select");
+            if (globalData?.cycles) {
+                cycleSelect.innerHTML = globalData.cycles.map((c, i) => {
+                    const isSel = (i === activeCycleIndex);
+                    const dte = c.display_days !== undefined ? `剩 ${c.display_days} 天` : `${c.days_to_expiry}天`;
+                    return `<option value="${c.code}" ${isSel ? "selected" : ""}>${c.label} (${c.expiry_date.slice(5)} · ${dte})</option>`;
+                }).join("");
+            }
+            document.getElementById("modal-contracts").value = "1";
+            document.getElementById("modal-put-strike").value = "";
+            document.getElementById("modal-put-premium").value = "";
+            document.getElementById("modal-call-strike").value = "";
+            document.getElementById("modal-call-premium").value = "";
+            modal.classList.remove("hidden");
+        }
+
+        function openEditCurrentPositionModal() {
+            if (!myPositions || myPositions.length === 0) {
+                openNewPositionModal();
+                return;
+            }
+            if (activePosIdx < 0 || activePosIdx >= myPositions.length) activePosIdx = 0;
+            editingPosIdx = activePosIdx;
+            const pos = myPositions[activePosIdx];
+            const modal = document.getElementById("position-modal");
+            const cycleSelect = document.getElementById("modal-cycle-select");
+            if (globalData?.cycles) {
+                cycleSelect.innerHTML = globalData.cycles.map(c => {
+                    const isSel = (c.code === pos.cycle_code);
+                    const dte = c.display_days !== undefined ? `剩 ${c.display_days} 天` : `${c.days_to_expiry}天`;
+                    return `<option value="${c.code}" ${isSel ? "selected" : ""}>${c.label} (${c.expiry_date.slice(5)} · ${dte})</option>`;
+                }).join("");
+            }
+            document.getElementById("modal-contracts").value = pos.contracts || 1;
+            document.getElementById("modal-put-strike").value = (pos.has_put && pos.put_strike) ? pos.put_strike : "";
+            document.getElementById("modal-put-premium").value = (pos.has_put && pos.put_premium !== undefined) ? pos.put_premium : "";
+            document.getElementById("modal-call-strike").value = (pos.has_call && pos.call_strike) ? pos.call_strike : "";
+            document.getElementById("modal-call-premium").value = (pos.has_call && pos.call_premium !== undefined) ? pos.call_premium : "";
+            modal.classList.remove("hidden");
         }
 
         function togglePositionEditModal() {
-            const modal = document.getElementById("position-modal");
-            modal.classList.toggle("hidden");
-            if (!modal.classList.contains("hidden")) {
-                document.getElementById("modal-put-strike").value = (activePosition?.has_put && activePosition?.put_strike) ? activePosition.put_strike : "";
-                document.getElementById("modal-put-premium").value = (activePosition?.has_put && activePosition?.put_premium) ? activePosition.put_premium : "";
-                document.getElementById("modal-call-strike").value = (activePosition?.has_call && activePosition?.call_strike) ? activePosition.call_strike : "";
-                document.getElementById("modal-call-premium").value = (activePosition?.has_call && activePosition?.call_premium) ? activePosition.call_premium : "";
+            document.getElementById("position-modal").classList.add("hidden");
+        }
+
+        function deleteCurrentPosition() {
+            if (!myPositions || myPositions.length === 0) {
+                alert("目前沒有任何持倉部位！");
+                return;
             }
+            const pos = myPositions[activePosIdx];
+            let desc = `${pos.cycle_label || pos.cycle_code} [`;
+            if (pos.has_put) desc += `${pos.put_strike}P`;
+            if (pos.has_put && pos.has_call) desc += ` / `;
+            if (pos.has_call) desc += `${pos.call_strike}C`;
+            desc += `] (${pos.contracts || 1}口)`;
+
+            if (!confirm(`確定要平倉 / 刪除「部位 #${activePosIdx + 1}: ${desc}」嗎？`)) {
+                return;
+            }
+
+            myPositions.splice(activePosIdx, 1);
+            if (activePosIdx >= myPositions.length) {
+                activePosIdx = Math.max(0, myPositions.length - 1);
+            }
+            saveStoredPositions();
         }
 
         function saveCustomPosition() {
+            const cycleCode = document.getElementById("modal-cycle-select").value;
+            const matchedCycle = globalData?.cycles?.find(c => c.code === cycleCode) || globalData?.cycles?.[0];
+            const contracts = Math.max(1, parseInt(document.getElementById("modal-contracts").value, 10) || 1);
+
             const pStrikeVal = document.getElementById("modal-put-strike").value.trim();
             const pPremVal = document.getElementById("modal-put-premium").value.trim();
             const cStrikeVal = document.getElementById("modal-call-strike").value.trim();
@@ -956,39 +1058,98 @@
             }
 
             const pos = {
-                cycle_code: "自訂",
-                cycle_label: "實盤持倉",
+                id: (editingPosIdx >= 0 && myPositions[editingPosIdx]?.id) ? myPositions[editingPosIdx].id : "pos_" + Date.now(),
+                cycle_code: matchedCycle ? matchedCycle.code : cycleCode,
+                cycle_label: matchedCycle ? matchedCycle.label : "自訂",
+                contracts: contracts,
                 has_put: hasPut,
                 has_call: hasCall,
                 put_strike: pStrike,
                 put_premium: pPrem,
                 call_strike: cStrike,
-                call_premium: cPrem
+                call_premium: cPrem,
+                updated_at: new Date().toISOString()
             };
 
-            saveStoredPosition(pos);
-            togglePositionEditModal();
-        }
-
-        // 採用推薦的單邊對稱合約
-        function applyComplementaryLeg() {
-            if (!recommendedCompLeg || !activePosition) return;
-
-            const updated = { ...activePosition };
-            if (recommendedCompLeg.type === "call") {
-                updated.has_call = true;
-                updated.call_strike = recommendedCompLeg.strike;
-                updated.call_premium = recommendedCompLeg.bid;
-            } else if (recommendedCompLeg.type === "put") {
-                updated.has_put = true;
-                updated.put_strike = recommendedCompLeg.strike;
-                updated.put_premium = recommendedCompLeg.bid;
+            if (editingPosIdx >= 0 && editingPosIdx < myPositions.length) {
+                myPositions[editingPosIdx] = pos;
+            } else {
+                myPositions.push(pos);
+                activePosIdx = myPositions.length - 1;
             }
 
-            saveStoredPosition(updated);
+            saveStoredPositions();
+            document.getElementById("position-modal").classList.add("hidden");
+        }
+
+        function applyOptimalToPosition(mode = 'both') {
+            const cycle = globalData.cycles?.[activeCycleIndex];
+            const opt = cycle?.strategy?.optimal;
+            if (!opt) return;
+
+            const pos = {
+                id: "pos_" + Date.now(),
+                cycle_code: cycle.code,
+                cycle_label: cycle.label,
+                contracts: 1,
+                has_put: mode === 'both' || mode === 'put_only',
+                has_call: mode === 'both' || mode === 'call_only',
+                put_strike: (mode === 'both' || mode === 'put_only') ? opt.put.strike : null,
+                put_premium: (mode === 'both' || mode === 'put_only') ? opt.put.bid : 0,
+                call_strike: (mode === 'both' || mode === 'call_only') ? opt.call.strike : null,
+                call_premium: (mode === 'both' || mode === 'call_only') ? opt.call.bid : 0,
+                created_at: new Date().toISOString()
+            };
+
+            myPositions.push(pos);
+            activePosIdx = myPositions.length - 1;
+            saveStoredPositions();
+        }
+
+        function applySpecificCombo(cycleIdx, comboIdx) {
+            const cycle = globalData.cycles?.[cycleIdx];
+            const alt = cycle?.strategy?.alternatives?.[comboIdx - 1];
+            if (!alt) return;
+
+            const pos = {
+                id: "pos_" + Date.now(),
+                cycle_code: cycle.code,
+                cycle_label: cycle.label,
+                contracts: 1,
+                has_put: true,
+                has_call: true,
+                put_strike: alt.put.strike,
+                put_premium: alt.put.bid,
+                call_strike: alt.call.strike,
+                call_premium: alt.call.bid,
+                created_at: new Date().toISOString()
+            };
+
+            myPositions.push(pos);
+            activePosIdx = myPositions.length - 1;
+            saveStoredPositions();
+        }
+
+        function applyComplementaryLeg() {
+            if (!recommendedCompLeg || !myPositions || myPositions.length === 0) return;
+            const pos = myPositions[activePosIdx];
+            if (!pos) return;
+
+            if (recommendedCompLeg.type === "call") {
+                pos.has_call = true;
+                pos.call_strike = recommendedCompLeg.strike;
+                pos.call_premium = recommendedCompLeg.bid;
+            } else if (recommendedCompLeg.type === "put") {
+                pos.has_put = true;
+                pos.put_strike = recommendedCompLeg.strike;
+                pos.put_premium = recommendedCompLeg.bid;
+            }
+            saveStoredPositions();
         }
 
         function renderPositionMonitor() {
+            renderPositionTabs();
+
             const F = globalData?.futures_price || 0;
             const alertCard = document.getElementById("roll-alert-card");
             const tpCard = document.getElementById("take-profit-card");
@@ -996,25 +1157,23 @@
             const statusPill = document.getElementById("pos-status-pill");
             const subtext = document.getElementById("pos-status-subtext");
 
-            // 隱藏所有提醒卡片，由下方邏輯按需開啟
             alertCard.classList.add("hidden");
             tpCard.classList.add("hidden");
             compCard.classList.add("hidden");
 
-            // 情境 3：雙向皆未建倉
-            if (!activePosition) {
+            if (!myPositions || myPositions.length === 0) {
                 statusPill.innerText = "🎯 尚未建立持倉 (雷達掃描中)";
                 statusPill.className = "text-xs px-2.5 py-0.5 rounded-full font-semibold bg-slate-800 text-slate-300 border border-slate-700";
-                subtext.innerText = "目前手中無部位，下方卡片已列出市場性價比最高的備兌勒式推薦";
+                subtext.innerText = "目前手中無部位，點擊上方「➕ 新增部位」或由下方量化組合一鍵帶入";
 
                 document.getElementById("pos-put-strike").innerText = "未建倉";
-                document.getElementById("pos-put-dist").innerText = "點擊推薦或自訂開倉";
+                document.getElementById("pos-put-dist").innerText = "點擊新增或推薦開倉";
                 document.getElementById("pos-put-delta").innerText = "--";
                 document.getElementById("pos-put-premium").innerText = "--";
                 document.getElementById("pos-put-breakeven").innerText = "兩平: --";
 
                 document.getElementById("pos-call-strike").innerText = "未建倉";
-                document.getElementById("pos-call-dist").innerText = "點擊推薦或自訂開倉";
+                document.getElementById("pos-call-dist").innerText = "點擊新增或推薦開倉";
                 document.getElementById("pos-call-delta").innerText = "--";
                 document.getElementById("pos-call-premium").innerText = "--";
                 document.getElementById("pos-call-breakeven").innerText = "兩平: --";
@@ -1032,11 +1191,17 @@
                 return;
             }
 
-            const pos = activePosition;
-            const cycle = globalData?.cycles?.[activeCycleIndex] || globalData?.cycles?.[0];
-            const currentOptions = cycle?.options || [];
+            if (activePosIdx < 0 || activePosIdx >= myPositions.length) activePosIdx = 0;
+            const pos = myPositions[activePosIdx];
+            const contracts = parseInt(pos.contracts, 10) || 1;
 
-            // 尋找當前持倉在當前合約中的最新即時行情 (買價 Bid 與買回平倉賣價 Ask)
+            // 關鍵修復：持倉的行情與 Greeks 必須精確錨定在 pos.cycle_code，絕不可依賴下方瀏覽切換的 activeCycleIndex
+            let targetCycle = globalData?.cycles?.find(c => c.code === pos.cycle_code);
+            if (!targetCycle) {
+                targetCycle = globalData?.cycles?.[0];
+            }
+            const currentOptions = targetCycle?.options || [];
+
             let curPutNode = null;
             let curCallNode = null;
             if (pos.has_put) {
@@ -1049,7 +1214,7 @@
             // 更新 Put 端 UI
             if (pos.has_put) {
                 document.getElementById("pos-put-strike").innerText = `${pos.put_strike} P`;
-                document.getElementById("pos-put-premium").innerText = `${pos.put_premium} 點`;
+                document.getElementById("pos-put-premium").innerText = `${pos.put_premium} 點 (${contracts}口)`;
                 const putDelta = curPutNode ? curPutNode.delta : -0.18;
                 document.getElementById("pos-put-delta").innerText = `Delta: ${putDelta.toFixed(2)}`;
                 
@@ -1070,7 +1235,7 @@
             // 更新 Call 端 UI
             if (pos.has_call) {
                 document.getElementById("pos-call-strike").innerText = `${pos.call_strike} C`;
-                document.getElementById("pos-call-premium").innerText = `${pos.call_premium} 點`;
+                document.getElementById("pos-call-premium").innerText = `${pos.call_premium} 點 (${contracts}口)`;
                 const callDelta = curCallNode ? curCallNode.delta : 0.17;
                 document.getElementById("pos-call-delta").innerText = `Delta: ${callDelta.toFixed(2)}`;
 
@@ -1088,65 +1253,74 @@
                 document.getElementById("pos-call-breakeven").innerText = "--";
             }
 
-            // 情境 1：雙向持倉完整監控 (Both Legs Active)
+            // 情境 1：雙向持倉完整監控
             if (pos.has_put && pos.has_call) {
-                const totalOpenPremium = Math.round((pos.put_premium + pos.call_premium) * 10) / 10;
-                document.getElementById("pos-center-title").innerText = "已開倉總收租點數";
-                document.getElementById("pos-total-premium").innerHTML = `${totalOpenPremium} <span class="text-sm font-normal text-slate-400">點 (雙向)</span>`;
-                document.getElementById("pos-total-premium-ntd").innerText = `折合 NT$ ${(totalOpenPremium * 50).toLocaleString()}`;
+                const singleOpenPremium = Math.round((pos.put_premium + pos.call_premium) * 10) / 10;
+                const totalCashNTD = Math.round(singleOpenPremium * 50 * contracts);
 
-                statusPill.innerText = "🛡️ 雙向勒式持倉中";
+                document.getElementById("pos-center-title").innerText = `已開倉總收租 (${contracts} 口)`;
+                document.getElementById("pos-total-premium").innerHTML = `${singleOpenPremium} <span class="text-sm font-normal text-slate-400">點 / 口</span>`;
+                document.getElementById("pos-total-premium-ntd").innerText = `總收租 NT$ ${totalCashNTD.toLocaleString()}`;
+
+                statusPill.innerText = `🛡️ [${pos.cycle_label || pos.cycle_code}] 雙向勒式持倉中`;
                 statusPill.className = "text-xs px-2.5 py-0.5 rounded-full font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40";
-                subtext.innerText = "即時監控突破風險與收租平倉獲利時機";
+                subtext.innerText = `部位 #${activePosIdx + 1} 即時防禦監控中（所屬合約：${targetCycle.label}，剩 ${targetCycle.display_days || targetCycle.days_to_expiry} 天到期）`;
 
-                // 計算當前買回平倉代價與利潤收割率 (Take Profit Monitor)
+                // 計算平倉買回成本
                 const curClosePutAsk = curPutNode ? (curPutNode.ask > 0 ? curPutNode.ask : curPutNode.price) : pos.put_premium * 0.5;
                 const curCloseCallAsk = curCallNode ? (curCallNode.ask > 0 ? curCallNode.ask : curCallNode.price) : pos.call_premium * 0.5;
                 const totalCurrentCost = Math.round((curClosePutAsk + curCloseCallAsk) * 10) / 10;
-                
-                // 估算已收割的利潤比例
-                const profitHarvestedPct = totalOpenPremium > 0 ? Math.round(((totalOpenPremium - totalCurrentCost) / totalOpenPremium) * 100) : 0;
+                const profitHarvestedPct = singleOpenPremium > 0 ? Math.round(((singleOpenPremium - totalCurrentCost) / singleOpenPremium) * 100) : 0;
 
-                // 轉倉突破預警判定：現價距任一邊 < 1.0% 或 Delta > 0.35
+                // 轉倉預警判定：現價距任一邊 < 1.0% 或 Delta > 0.35
                 const putDist = F > 0 ? (((F - pos.put_strike) / F) * 100) : 10;
                 const callDist = F > 0 ? (((pos.call_strike - F) / F) * 100) : 10;
                 const isPutAlert = putDist < 1.0 || (curPutNode && curPutNode.delta < -0.35);
                 const isCallAlert = callDist < 1.0 || (curCallNode && curCallNode.delta > 0.35);
 
                 if (isPutAlert || isCallAlert) {
-                    statusPill.innerText = "🚨 轉倉預警觸發";
+                    statusPill.innerText = `🚨 [${pos.cycle_label || pos.cycle_code}] 轉倉預警觸發`;
                     statusPill.className = "text-xs px-2.5 py-0.5 rounded-full font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/50 animate-pulse";
                     alertCard.classList.remove("hidden");
 
-                    const alertTitle = isCallAlert ? "現價即將突破上方 Call（Covered Call 防禦區）" : "現價即將跌破下方 Put（Cash-Secured 支撐區）";
+                    const alertTitle = isCallAlert ? `現價即將突破上方 Call（Covered Call 防禦區 @ ${pos.call_strike}）` : `現價即將跌破下方 Put（Cash-Secured 支撐區 @ ${pos.put_strike}）`;
                     document.getElementById("roll-alert-title").innerText = alertTitle;
 
-                    const roll = globalData?.roll_engine;
-                    if (roll) {
-                        document.getElementById("roll-close-cost").innerText = `${roll.current_close_cost} 點`;
-                        document.getElementById("roll-open-credit").innerText = `${roll.next_open_credit} 點`;
-                        document.getElementById("roll-net-credit").innerText = `${roll.net_credit >= 0 ? "+" : ""}${roll.net_credit} 點`;
-                        document.getElementById("roll-next-cycle-name").innerText = `${roll.next_cycle} 合約開倉`;
+                    // 計算轉移至次週合約之淨權利金 (Net Credit)
+                    const posCycleIdx = globalData?.cycles?.findIndex(c => c.code === pos.cycle_code);
+                    const nextCycle = (posCycleIdx >= 0 && posCycleIdx + 1 < (globalData?.cycles?.length || 0))
+                        ? globalData.cycles[posCycleIdx + 1]
+                        : targetCycle;
 
-                        const statusEl = document.getElementById("roll-net-status");
-                        if (roll.is_net_credit_positive) {
-                            statusEl.innerText = "淨權利金流入 (Net Credit ≥ 0) ✅ 推薦執行轉倉";
-                            statusEl.className = "text-[10px] text-emerald-400 font-semibold";
-                        } else {
-                            statusEl.innerText = "轉倉微幅貼點 ⚠️ 建議待反彈轉倉";
-                            statusEl.className = "text-[10px] text-amber-400 font-semibold";
-                        }
+                    const nextOpt = nextCycle?.strategy?.optimal;
+                    const nextOpenCredit = nextOpt ? nextOpt.total_premium : (singleOpenPremium * 1.1);
+                    const netCredit = Math.round((nextOpenCredit - totalCurrentCost) * 10) / 10;
 
-                        document.getElementById("roll-call-action").innerText = `${roll.recommended_roll.call.action} (至 ${roll.recommended_roll.call.to_strike})`;
-                        document.getElementById("roll-put-action").innerText = `${roll.recommended_roll.put.action} (至 ${roll.recommended_roll.put.to_strike})`;
+                    document.getElementById("roll-close-cost").innerText = `${totalCurrentCost} 點`;
+                    document.getElementById("roll-open-credit").innerText = `${nextOpenCredit} 點`;
+                    document.getElementById("roll-net-credit").innerText = `${netCredit >= 0 ? "+" : ""}${netCredit} 點`;
+                    document.getElementById("roll-next-cycle-name").innerText = `${nextCycle.label} (${nextCycle.display_days || nextCycle.days_to_expiry}天到期)`;
+
+                    const statusEl = document.getElementById("roll-net-status");
+                    if (netCredit >= 0) {
+                        statusEl.innerText = "淨權利金流入 (Net Credit ≥ 0) ✅ 推薦執行轉倉";
+                        statusEl.className = "text-[10px] text-emerald-400 font-semibold";
+                    } else {
+                        statusEl.innerText = "轉倉微幅貼點 ⚠️ 建議待反彈轉倉";
+                        statusEl.className = "text-[10px] text-amber-400 font-semibold";
                     }
+
+                    const callRollAction = isCallAlert ? `Roll Up & Out (往上平移至 ${nextOpt ? nextOpt.call.strike : pos.call_strike + 500})` : "時間平移 (Roll Out)";
+                    const putRollAction = isPutAlert ? `Roll Down & Out (往下平移至 ${nextOpt ? nextOpt.put.strike : pos.put_strike - 500})` : "時間平移 (Roll Out)";
+                    document.getElementById("roll-call-action").innerText = callRollAction;
+                    document.getElementById("roll-put-action").innerText = putRollAction;
+
                     document.getElementById("pos-profit-action").innerHTML = `<span class="text-rose-400 font-bold">⚠️ 面臨單邊突破，建議同時間轉倉下一週</span>`;
 
                 } else if (profitHarvestedPct >= 70) {
-                    // 達到 70%+ 利潤收割，觸發最佳平倉止盈時機！
                     tpCard.classList.remove("hidden");
                     document.getElementById("take-profit-title").innerText = `🎯 最佳平倉止盈時機！(利潤已收割 ${profitHarvestedPct}%)`;
-                    document.getElementById("take-profit-desc").innerText = `開倉點數 ${totalOpenPremium} 點，目前平倉只需約 ${totalCurrentCost} 點。剩餘點數肉末過薄，且結算前承擔過大 Gamma 尾部風險，強烈建議平倉鎖利並資金移往次週！`;
+                    document.getElementById("take-profit-desc").innerText = `單口開倉 ${singleOpenPremium} 點，目前平倉只需約 ${totalCurrentCost} 點。剩餘肉末過薄且承擔到期 Gamma 尾部風險，強烈建議平倉鎖利並移往次週！`;
                     document.getElementById("pos-profit-action").innerHTML = `<span class="text-emerald-400 font-bold">🏆 利潤已收割 ${profitHarvestedPct}% · 建議止盈平倉</span>`;
 
                 } else if (profitHarvestedPct >= 50) {
@@ -1155,54 +1329,53 @@
                     document.getElementById("pos-profit-action").innerHTML = `<span class="text-cyan-400">⏳ 時間價值融化中 · 預估淨值獲利 ${profitHarvestedPct}%</span>`;
                 }
             }
-
-            // 情境 2：單邊持倉 (只有 Put 或只有 Call) -> 自動尋找另一側最佳對沖開倉
+            // 情境 2：單邊 Put
             else if (pos.has_put && !pos.has_call) {
-                statusPill.innerText = "⚠️ 單邊持倉：僅賣出 Put (CSP)";
+                statusPill.innerText = `⚠️ [${pos.cycle_label || pos.cycle_code}] 單邊持倉：僅賣出 Put (CSP)`;
                 statusPill.className = "text-xs px-2.5 py-0.5 rounded-full font-semibold bg-cyan-500/20 text-cyan-400 border border-cyan-500/40";
-                subtext.innerText = "已建置下方現金擔保支撐，系統正為您尋找上方最佳配對 Covered Call";
+                subtext.innerText = `部位 #${activePosIdx + 1} 已建置下方現金擔保支撐，系統正為您尋找上方最佳配對 Covered Call`;
 
-                document.getElementById("pos-center-title").innerText = "單邊 Put 開倉點數";
-                document.getElementById("pos-total-premium").innerHTML = `${pos.put_premium} <span class="text-sm font-normal text-slate-400">點 (單邊)</span>`;
-                document.getElementById("pos-total-premium-ntd").innerText = `折合 NT$ ${(pos.put_premium * 50).toLocaleString()}`;
+                document.getElementById("pos-center-title").innerText = `單邊 Put 開倉點數 (${contracts} 口)`;
+                document.getElementById("pos-total-premium").innerHTML = `${pos.put_premium} <span class="text-sm font-normal text-slate-400">點 / 口</span>`;
+                document.getElementById("pos-total-premium-ntd").innerText = `總收租 NT$ ${(pos.put_premium * 50 * contracts).toLocaleString()}`;
                 document.getElementById("pos-profit-action").innerHTML = `<span class="text-cyan-300">尋找配對 Call 中...</span>`;
 
-                // 智慧推薦最佳對稱 Call (Delta 0.15~0.20)
-                const optCall = cycle?.strategy?.optimal?.call;
+                const optCall = targetCycle?.strategy?.optimal?.call;
                 if (optCall) {
                     recommendedCompLeg = { type: "call", strike: optCall.strike, bid: optCall.bid };
                     compCard.classList.remove("hidden");
-                    document.getElementById("comp-leg-title").innerText = `已持有 Put @ ${pos.put_strike}，推薦補足上方 Covered Call`;
-                    document.getElementById("comp-leg-desc").innerText = `目前大盤現價約 ${F.toLocaleString()} 點。搭配上方 Delta 約 ${optCall.delta} 的價外 Call，可在現價上漲時提供天然現貨覆蓋，並擴大雙邊租金緩衝！`;
+                    document.getElementById("comp-leg-title").innerText = `已持有 ${targetCycle.label} Put @ ${pos.put_strike}，推薦補足上方 Covered Call`;
+                    document.getElementById("comp-leg-desc").innerText = `目前台指期約 ${F.toLocaleString()} 點。搭配上方 Delta 約 ${optCall.delta} 的價外 Call，可在現價上漲時提供天然現貨覆蓋，並擴大雙邊租金緩衝！`;
                     document.getElementById("comp-recommended-strike").innerText = `Sell ${optCall.strike} Call (Delta: ${optCall.delta})`;
                     document.getElementById("comp-recommended-premium").innerText = `${optCall.bid}`;
                     const combined = Math.round((pos.put_premium + optCall.bid) * 10) / 10;
                     document.getElementById("comp-combined-premium").innerText = `${combined}`;
                 }
             }
+            // 情境 3：單邊 Call
             else if (!pos.has_put && pos.has_call) {
-                statusPill.innerText = "⚠️ 單邊持倉：僅賣出 Call (CC)";
+                statusPill.innerText = `⚠️ [${pos.cycle_label || pos.cycle_code}] 單邊持倉：僅賣出 Call (CC)`;
                 statusPill.className = "text-xs px-2.5 py-0.5 rounded-full font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40";
-                subtext.innerText = "已建置上方現貨覆蓋防禦，系統正為您尋找下方最佳配對 Cash-Secured Put";
+                subtext.innerText = `部位 #${activePosIdx + 1} 已建置上方現貨覆蓋防禦，系統正為您尋找下方最佳配對 Cash-Secured Put`;
 
-                document.getElementById("pos-center-title").innerText = "單邊 Call 開倉點數";
-                document.getElementById("pos-total-premium").innerHTML = `${pos.call_premium} <span class="text-sm font-normal text-slate-400">點 (單邊)</span>`;
-                document.getElementById("pos-total-premium-ntd").innerText = `折合 NT$ ${(pos.call_premium * 50).toLocaleString()}`;
+                document.getElementById("pos-center-title").innerText = `單邊 Call 開倉點數 (${contracts} 口)`;
+                document.getElementById("pos-total-premium").innerHTML = `${pos.call_premium} <span class="text-sm font-normal text-slate-400">點 / 口</span>`;
+                document.getElementById("pos-total-premium-ntd").innerText = `總收租 NT$ ${(pos.call_premium * 50 * contracts).toLocaleString()}`;
                 document.getElementById("pos-profit-action").innerHTML = `<span class="text-emerald-300">尋找配對 Put 中...</span>`;
 
-                // 智慧推薦最佳對稱 Put (Delta -0.15~-0.20)
-                const optPut = cycle?.strategy?.optimal?.put;
+                const optPut = targetCycle?.strategy?.optimal?.put;
                 if (optPut) {
                     recommendedCompLeg = { type: "put", strike: optPut.strike, bid: optPut.bid };
                     compCard.classList.remove("hidden");
-                    document.getElementById("comp-leg-title").innerText = `已持有 Call @ ${pos.call_strike}，推薦補足下方 Cash-Secured Put`;
-                    document.getElementById("comp-leg-desc").innerText = `目前大盤現價約 ${F.toLocaleString()} 點。搭配下方 Delta 約 ${optPut.delta} 的價外 Put，可在 240MA 年線支撐上方鎖定高性價比租金！`;
+                    document.getElementById("comp-leg-title").innerText = `已持有 ${targetCycle.label} Call @ ${pos.call_strike}，推薦補足下方 Cash-Secured Put`;
+                    document.getElementById("comp-leg-desc").innerText = `目前台指期約 ${F.toLocaleString()} 點。搭配下方 Delta 約 ${optPut.delta} 的價外 Put，可在 240MA 年線支撐上方鎖定高性價比租金！`;
                     document.getElementById("comp-recommended-strike").innerText = `Sell ${optPut.strike} Put (Delta: ${optPut.delta})`;
                     document.getElementById("comp-recommended-premium").innerText = `${optPut.bid}`;
                     const combined = Math.round((pos.call_premium + optPut.bid) * 10) / 10;
                     document.getElementById("comp-combined-premium").innerText = `${combined}`;
                 }
             }
+        }
         }
 
         // ==========================================
@@ -1250,7 +1423,7 @@
         }
 
         window.addEventListener("DOMContentLoaded", () => {
-            loadStoredPosition();
+            loadStoredPositions();
             fetchData();
             resetCountdown();
         });
