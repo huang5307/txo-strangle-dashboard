@@ -25,6 +25,11 @@ export default {
             return new Response(null, { headers: corsHeaders });
         }
 
+        // 靜態資源處理（Cloudflare Workers Static Assets 相容）
+        if (!path.startsWith("/api") && env && env.ASSETS) {
+            return env.ASSETS.fetch(request);
+        }
+
         try {
             // 1. 強制手動刷新快取
             if (path === "/api/strangle/sync" || path === "/api/sync-oi") {
