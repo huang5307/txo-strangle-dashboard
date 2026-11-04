@@ -939,7 +939,7 @@ function renderPositionMonitor() {
                     <div class="p-8 text-center bg-slate-950/60 rounded-2xl border border-dashed border-slate-800">
                         <div class="text-3xl mb-2">🎯</div>
                         <div class="text-sm font-semibold text-slate-300">目前尚未建立任何實盤持倉部位</div>
-                        <p class="text-xs text-slate-500 mt-1 max-w-md mx-auto">點擊上方「➕ 新增實盤部位」自行填寫您的開倉口數與點數。系統將縱向列出所有週期合約，即時提供四大平倉防禦時機提醒！</p>
+                        <p class="text-xs text-slate-500 mt-1 max-w-md mx-auto">點擊上方「➕ 新增實盤部位」自行填寫您的開倉口數與點數。系統將縱向列出所有週期合約，即時提供四大平倉防禦時機提醒與成本覆蓋區間！</p>
                         <button onclick="openNewPositionModal()" class="mt-4 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white rounded-xl shadow transition">➕ 立即手動新增部位</button>
                     </div>
                 `;
@@ -998,6 +998,59 @@ function renderPositionMonitor() {
                 const posUnrealizedPnlNTD = Math.round((singleOpenPremium - totalCurrentCost) * 50 * contracts);
                 grandTotalOpenNTD += posOpenCashNTD;
                 grandEstimatedProfitNTD += posUnrealizedPnlNTD;
+
+                // ==========================================
+                // 計算「實盤安全覆蓋區間 (Covered Range / 成本防線)」
+                // ==========================================
+                let coveredRangeDisplay = "";
+                let bufferDetailsHTML = "";
+
+                if (pos.has_call && pos.has_put) {
+                    // 雙賣勒式：總權利金同時抵禦上下兩端
+                    const lowerCovered = Math.round(pos.put_strike - singleOpenPremium);
+                    const upperCovered = Math.round(pos.call_strike + singleOpenPremium);
+                    coveredRangeDisplay = `[ ${lowerCovered.toLocaleString()} ~ ${upperCovered.toLocaleString()} ]`;
+
+                    const downsidePts = Math.round(F - lowerCovered);
+                    const downsidePct = F > 0 ? (((F - lowerCovered) / F) * 100).toFixed(1) : 0;
+                    const upsidePts = Math.round(upperCovered - F);
+                    const upsidePct = F > 0 ? (((upperCovered - F) / F) * 100).toFixed(1) : 0;
+
+                    const isCovered = (F >= lowerCovered && F <= upperCovered);
+                    const statusTag = isCovered
+                        ? '<span class="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40">完全覆蓋中 ✅</span>'
+                        : '<span class="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold border border-rose-500/40">已偏離安全區 ⚠️</span>';
+
+                    bufferDetailsHTML = `
+                        ${statusTag}
+                        <span class="text-slate-500 hidden sm:inline">|</span>
+                        <span class="text-rose-400">下檔安全緩衝: ${downsidePts.toLocaleString()} 點 (-${downsidePct}%)</span>
+                        <span class="text-slate-500 hidden sm:inline">|</span>
+                        <span class="text-emerald-400">上檔安全緩衝: ${upsidePts.toLocaleString()} 點 (+${upsidePct}%)</span>
+                    `;
+                } else if (pos.has_put && !pos.has_call) {
+                    // 單邊 Put (CSP)
+                    const lowerCovered = Math.round(pos.put_strike - pos.put_premium);
+                    coveredRangeDisplay = `[ ≥ ${lowerCovered.toLocaleString()} 點全額獲利 ]`;
+                    const downsidePts = Math.round(F - lowerCovered);
+                    const downsidePct = F > 0 ? (((F - lowerCovered) / F) * 100).toFixed(1) : 0;
+                    bufferDetailsHTML = `
+                        <span class="text-[10px] px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/40">下方支撐線: ${lowerCovered}</span>
+                        <span class="text-slate-500 hidden sm:inline">|</span>
+                        <span class="text-rose-400">下檔安全緩衝: ${downsidePts.toLocaleString()} 點 (-${downsidePct}%)</span>
+                    `;
+                } else if (!pos.has_put && pos.has_call) {
+                    // 單邊 Call (CC)
+                    const upperCovered = Math.round(pos.call_strike + pos.call_premium);
+                    coveredRangeDisplay = `[ ≤ ${upperCovered.toLocaleString()} 點全額獲利 ]`;
+                    const upsidePts = Math.round(upperCovered - F);
+                    const upsidePct = F > 0 ? (((upperCovered - F) / F) * 100).toFixed(1) : 0;
+                    bufferDetailsHTML = `
+                        <span class="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40">上方防禦線: ${upperCovered}</span>
+                        <span class="text-slate-500 hidden sm:inline">|</span>
+                        <span class="text-emerald-400">上檔安全緩衝: ${upsidePts.toLocaleString()} 點 (+${upsidePct}%)</span>
+                    `;
+                }
 
                 // ==========================================
                 // 四大核心情境提醒規則引擎（極簡明瞭、直指動作）
@@ -1135,6 +1188,17 @@ function renderPositionMonitor() {
                             <div class="text-xs mt-1.5 opacity-90 font-medium pl-0.5">${scenario.action}</div>
                         </div>
 
+                        <!-- 實盤損益兩平防護區間 (Covered Range / 成本防護線) -->
+                        <div class="mt-3 p-3 rounded-xl bg-slate-900/90 border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-2.5">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="text-xs px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-bold">🛡️ 實盤安全覆蓋區間 (成本防護線)</span>
+                                <span class="font-mono font-black text-amber-300 text-sm md:text-base">${coveredRangeDisplay}</span>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-2 font-mono text-xs">
+                                ${bufferDetailsHTML}
+                            </div>
+                        </div>
+
                         <!-- 三欄數據面板 (Call 左邊，Strike/綜合 中間，Put 右邊) -->
                         <div class="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 items-stretch">
                             <!-- Call 側 (左邊) -->
@@ -1150,7 +1214,7 @@ function renderPositionMonitor() {
                                 <div class="text-[11px] text-slate-400 pt-2 border-t border-slate-800 flex justify-between font-mono">
                                     <span>開倉: <span class="text-slate-200 font-semibold">${pos.has_call ? pos.call_premium + ' 點' : '--'}</span></span>
                                     <span>現價Ask: <span class="${curCallAsk <= 0.5 ? 'text-cyan-400 font-bold' : 'text-slate-300'}">${pos.has_call ? (curCallAsk > 0 ? curCallAsk + ' 點' : '-') : '--'}</span></span>
-                                    <span class="text-emerald-400/90">兩平: ${pos.has_call ? callBE : '--'}</span>
+                                    <span class="text-emerald-400/90">單邊兩平: ${pos.has_call ? callBE : '--'}</span>
                                 </div>
                             </div>
 
@@ -1190,7 +1254,7 @@ function renderPositionMonitor() {
                                 <div class="text-[11px] text-slate-400 pt-2 border-t border-slate-800 flex justify-between font-mono">
                                     <span>開倉: <span class="text-slate-200 font-semibold">${pos.has_put ? pos.put_premium + ' 點' : '--'}</span></span>
                                     <span>現價Ask: <span class="${curPutAsk <= 0.5 ? 'text-cyan-400 font-bold' : 'text-slate-300'}">${pos.has_put ? (curPutAsk > 0 ? curPutAsk + ' 點' : '-') : '--'}</span></span>
-                                    <span class="text-rose-400/90">兩平: ${pos.has_put ? putBE : '--'}</span>
+                                    <span class="text-rose-400/90">單邊兩平: ${pos.has_put ? putBE : '--'}</span>
                                 </div>
                             </div>
                         </div>
