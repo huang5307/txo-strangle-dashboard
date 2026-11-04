@@ -18,16 +18,32 @@ export default {
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type",
-            "Content-Type": "application/json;charset=UTF-8"
+            "Content-Type": "application/json;charset=UTF-8",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
         };
 
         if (request.method === "OPTIONS") {
             return new Response(null, { headers: corsHeaders });
         }
 
-        // 靜態資源處理（Cloudflare Workers Static Assets 相容）
+        // 靜態資源處理（Cloudflare Workers Static Assets 相容，強制禁止 HTML 快取）
         if (!path.startsWith("/api") && env && env.ASSETS) {
-            return env.ASSETS.fetch(request);
+            const assetRes = await env.ASSETS.fetch(request);
+            const contentType = assetRes.headers.get("content-type") || "";
+            if (contentType.includes("text/html")) {
+                const newHeaders = new Headers(assetRes.headers);
+                newHeaders.set("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0");
+                newHeaders.set("Pragma", "no-cache");
+                newHeaders.set("Expires", "0");
+                return new Response(assetRes.body, {
+                    status: assetRes.status,
+                    statusText: assetRes.statusText,
+                    headers: newHeaders
+                });
+            }
+            return assetRes;
         }
 
         try {
@@ -124,7 +140,9 @@ async function getOrGeneratePayload(env) {
     if (cachedStr) {
         try {
             const parsed = JSON.parse(cachedStr);
-            if (parsed._cached_at && (now - parsed._cached_at < 45000)) {
+            // 防呆：若快取中期貨價等於加權現貨價，或無主力合約名稱，視為舊版髒快取，直接捨棄！
+            const isDirtyCache = !parsed.futures_meta?.name || parsed.futures_price === Math.round(parsed.twii_spot);
+            if (!isDirtyCache && parsed._cached_at && (now - parsed._cached_at < 30000)) {
                 memoryCache = cachedStr;
                 memoryCacheTime = now;
                 return parsed;

@@ -4,7 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>TXO 備兌賣出勒式策略（Covered Short Strangle）量化收租雷達</title>
-    <meta name="version" content="3.1.0-flexible-legs">
+    <meta name="version" content="3.2.0-Live">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     
     <!-- Favicon & PWA Icons -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -60,7 +63,7 @@
                 <div>
                     <div class="flex items-center gap-2">
                         <h1 class="text-lg md:text-2xl font-black text-white tracking-tight">TXO 備兌賣出勒式策略量化雷達</h1>
-                        <span class="px-2 py-0.5 rounded text-[10px] md:text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Covered Strangle v3.1</span>
+                        <span class="px-2 py-0.5 rounded text-[10px] md:text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Covered Strangle v3.2-Live</span>
                     </div>
                     <p class="text-xs md:text-sm text-slate-400 mt-0.5">上方 Covered Call (現貨覆蓋) + 下方 Cash-Secured Put (年線支撐) + 單/雙邊持倉動態監控</p>
                 </div>
@@ -71,6 +74,10 @@
                     <span class="w-2 h-2 rounded-full bg-slate-500 inline-block" id="status-indicator"></span>
                     <span id="market-status-text">連線中...</span>
                 </div>
+                <button onclick="forceClearCacheAndReload()" title="清除本機快取並強制重載最新版" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-900 border border-slate-700 rounded-xl text-xs font-medium text-amber-300 transition flex items-center gap-1">
+                    <span>🧹</span>
+                    <span class="hidden sm:inline">清快取重載</span>
+                </button>
                 <button onclick="refreshData(true)" id="refresh-btn" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 active:bg-slate-900 border border-slate-700 rounded-xl text-xs font-medium text-slate-300 transition flex items-center gap-1.5">
                     <svg class="w-3.5 h-3.5" id="refresh-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                     <span>重新整理</span>
@@ -583,9 +590,17 @@
             renderPositionMonitor();
         }
 
+        function forceClearCacheAndReload() {
+            try {
+                localStorage.clear();
+                sessionStorage.clear();
+            } catch (e) {}
+            window.location.href = window.location.pathname + '?t=' + Date.now();
+        }
+
         async function fetchData() {
             try {
-                const res = await fetch("/api/strangle");
+                const res = await fetch("/api/strangle?t=" + Date.now());
                 if (!res.ok) throw new Error("Network response was not ok");
                 globalData = await res.json();
                 renderAll();
@@ -600,7 +615,7 @@
                 const icon = document.getElementById("refresh-icon");
                 icon.classList.add("animate-spin");
                 try {
-                    const res = await fetch("/api/strangle/sync");
+                    const res = await fetch("/api/strangle/sync?t=" + Date.now());
                     if (res.ok) {
                         globalData = await res.json();
                         renderAll();
