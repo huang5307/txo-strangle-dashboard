@@ -127,47 +127,50 @@ async function getOrGeneratePayload(env) {
         return JSON.parse(memoryCache);
     }
 
-    // 2. KV 快取
+    // 2. KV 快取檢查
     let cachedStr = null;
+    let cachedObj = null;
     if (env && env.TXO_CACHE) {
         try {
             cachedStr = await env.TXO_CACHE.get("txo_strangle_payload_cache");
+            if (cachedStr) {
+                cachedObj = JSON.parse(cachedStr);
+            }
         } catch (e) {
             console.warn("KV get error:", e);
         }
     }
 
-    if (cachedStr) {
-        try {
-            const parsed = JSON.parse(cachedStr);
-            // 防呆：若快取中期貨價等於加權現貨價，或無主力合約名稱，視為舊版髒快取，直接捨棄！
-            const isDirtyCache = !parsed.futures_meta?.name || parsed.futures_price === Math.round(parsed.twii_spot);
-            if (!isDirtyCache && parsed._cached_at && (now - parsed._cached_at < 30000)) {
-                memoryCache = cachedStr;
-                memoryCacheTime = now;
-                return parsed;
-            }
-        } catch (e) {
-            console.warn("KV parse error:", e);
+    // 若 KV 快取在 30 秒內，且非髒快取，直接以超快速度回傳
+    if (cachedObj) {
+        const isDirty = !cachedObj.futures_meta?.name || (cachedObj.futures_price === Math.round(cachedObj.twii_spot) && cachedObj.market_session === "night");
+        if (!isDirty && cachedObj._cached_at && (now - cachedObj._cached_at < 35000)) {
+            memoryCache = cachedStr;
+            memoryCacheTime = now;
+            return cachedObj;
         }
     }
 
-    // 3. 生成最新數據
-    const payload = await generateStranglePayload(env);
-    payload._cached_at = now;
-    const payloadStr = JSON.stringify(payload);
-    memoryCache = payloadStr;
-    memoryCacheTime = now;
+    // 3. 生成最新數據（若生成發生錯誤，降級使用既有快取）
+    try {
+        const payload = await generateStranglePayload(env);
+        payload._cached_at = now;
+        const payloadStr = JSON.stringify(payload);
+        memoryCache = payloadStr;
+        memoryCacheTime = now;
 
-    if (env && env.TXO_CACHE) {
-        try {
-            await env.TXO_CACHE.put("txo_strangle_payload_cache", payloadStr, { expirationTtl: 86400 });
-        } catch (e) {
-            console.warn("KV put error:", e);
+        if (env && env.TXO_CACHE) {
+            env.TXO_CACHE.put("txo_strangle_payload_cache", payloadStr, { expirationTtl: 86400 }).catch(() => {});
         }
-    }
 
-    return payload;
+        return payload;
+    } catch (err) {
+        console.error("generateStranglePayload failed:", err);
+        if (cachedObj) {
+            return cachedObj;
+        }
+        throw err;
+    }
 }
 
 // ==========================================
@@ -601,8 +604,26 @@ function parseCycleExpiry(cycleStr) {
 
 async function getDailyBaselineData(env) {
     const now = Date.now();
-    if (memoryDailyBaseline && (now - memoryDailyBaselineTime < 300000)) {
+    // 1. 記憶體快取 10 分鐘
+    if (memoryDailyBaseline && (now - memoryDailyBaselineTime < 600000)) {
         return memoryDailyBaseline;
+    }
+
+    // 2. KV 快取檢查 (每日盤後 OpenAPI 資料全日固定，快取 6 小時可大幅降低延遲)
+    if (env && env.TXO_CACHE) {
+        try {
+            const cachedStr = await env.TXO_CACHE.get("txo_daily_baseline_v2");
+            if (cachedStr) {
+                const parsed = JSON.parse(cachedStr);
+                if (parsed.cyclesMap && Object.keys(parsed.cyclesMap).length > 0) {
+                    memoryDailyBaseline = parsed;
+                    memoryDailyBaselineTime = now;
+                    return parsed;
+                }
+            }
+        } catch (e) {
+            console.warn("KV baseline get error:", e);
+        }
     }
 
     const [futData, optData] = await Promise.all([
@@ -681,6 +702,11 @@ async function getDailyBaselineData(env) {
 
     memoryDailyBaseline = baseline;
     memoryDailyBaselineTime = now;
+
+    if (env && env.TXO_CACHE) {
+        env.TXO_CACHE.put("txo_daily_baseline_v2", JSON.stringify(baseline), { expirationTtl: 21600 }).catch(() => {});
+    }
+
     return baseline;
 }
 
@@ -847,9 +873,11 @@ function evaluateOptimalStrangle(optionsList, futuresPrice, dteDays, hv20, ma240
 
 async function generateStranglePayload(env) {
     const sessionInfo = getTaipeiSessionInfo();
-    const baseline = await getDailyBaselineData(env);
-    const twiiData = await fetchYahooTWIIAndHV();
-    const etfPrices = await fetchYahooEtfPrices();
+    const [baseline, twiiData, etfPrices] = await Promise.all([
+        getDailyBaselineData(env),
+        fetchYahooTWIIAndHV(),
+        fetchYahooEtfPrices()
+    ]);
 
     const cyclesMap = JSON.parse(JSON.stringify(baseline.cyclesMap || {}));
     const totalCallOi = baseline.totalCallOi || 0;
