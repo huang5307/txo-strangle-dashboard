@@ -426,24 +426,26 @@ async function getLiveMisFutures(frontMonthCode, sessionInfo, env) {
     let quotes = await fetchMisQuoteList("getQuoteList", {
         MarketType: sessionInfo.primary,
         SymbolType: "F",
-        KindID: "1",
-        CID: "TXF",
-        ExpireMonth: frontMonthCode
+        CommodityId: "TX"
     }, env);
 
     if (!quotes || quotes.length === 0) {
         quotes = await fetchMisQuoteList("getQuoteList", {
             MarketType: sessionInfo.secondary,
             SymbolType: "F",
-            KindID: "1",
-            CID: "TXF",
-            ExpireMonth: frontMonthCode
+            CommodityId: "TX"
         }, env);
     }
 
     if (!quotes || quotes.length === 0) return null;
 
-    const q = quotes.find(item => item.SymbolID === `TXF${frontMonthCode}`) || quotes[0];
+    // 過濾大台指期貨合約 (TXF 開頭，排除價差單 -S / -P)
+    const isBigTx = q => q.SymbolID && q.SymbolID.startsWith("TXF") && !q.SymbolID.endsWith("-P") && !q.SymbolID.endsWith("-S");
+    const bigTxQuotes = quotes.filter(isBigTx);
+    
+    // 依成交量排序，取成交量最大之近月/主力合約
+    bigTxQuotes.sort((a, b) => (parseInt(b.CTotalVolume || "0", 10) || 0) - (parseInt(a.CTotalVolume || "0", 10) || 0));
+    const q = bigTxQuotes[0] || quotes.find(isBigTx) || quotes[0];
     if (!q) return null;
 
     let price = 0;
@@ -458,11 +460,13 @@ async function getLiveMisFutures(frontMonthCode, sessionInfo, env) {
 
     return {
         symbol: q.SymbolID,
+        name: q.DispCName || "臺指期",
         price,
         bid,
         ask,
         ref,
         change: q.CDiff ? parseFloat(q.CDiff) : 0,
+        change_rate: q.CDiffRate ? parseFloat(q.CDiffRate) : 0,
         volume: q.CTotalVolume ? parseInt(q.CTotalVolume, 10) : 0
     };
 }
@@ -914,8 +918,8 @@ async function generateStranglePayload(env) {
     // 若期貨市價尚未取得，由 OpenAPI 盤後資料或 Yahoo 加權指數備援
     if (futuresPrice <= 0) {
         if (txRecords && txRecords.length > 0) {
-            const front = txRecords.find(r => (r.ContractMonthWeek || "").trim() === frontMonthCode);
-            if (front) futuresPrice = parseFloat(front.SettlementPrice || front.ClosePrice || "0") || 0;
+            const front = txRecords.find(r => r.Contract === "TX" && ((r["ContractMonth(Week)"] || r.ContractMonthWeek || "").trim() === frontMonthCode));
+            if (front) futuresPrice = parseFloat(front.SettlementPrice || front.ClosePrice || front.Last || "0") || 0;
         }
         if (futuresPrice <= 0 && twiiData.twiiPrice > 0) {
             futuresPrice = Math.round(twiiData.twiiPrice);
