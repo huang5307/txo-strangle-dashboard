@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Background Light Gradient: Pure Crisp White to Subtle Ice-Mint Cyan -->
+    <radialGradient id="bgLightGrad" cx="50%" cy="36%" r="75%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="65%" stop-color="#f0fdfa"/>
+      <stop offset="100%" stop-color="#e2f5f3"/>
+    </radialGradient>
+
+    <!-- Radar Ambient Soft Glow -->
+    <radialGradient id="radarLightGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.18"/>
+      <stop offset="50%" stop-color="#06b6d4" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Outer Rim Gradient: Vivid Sky to Emerald -->
+    <linearGradient id="rimLightGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7"/>
+      <stop offset="40%" stop-color="#0d9488"/>
+      <stop offset="80%" stop-color="#059669"/>
+      <stop offset="100%" stop-color="#10b981"/>
+    </linearGradient>
+
+    <!-- Central Fortress Shield Gradient: High-Energy Emerald-Teal -->
+    <linearGradient id="shieldFillGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7"/>
+      <stop offset="45%" stop-color="#0d9488"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+
+    <!-- Sweep Beam Gradient (Light Theme) -->
+    <linearGradient id="sweepLightGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0"/>
+      <stop offset="65%" stop-color="#10b981" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#059669" stop-opacity="0.32"/>
+    </linearGradient>
+
+    <!-- Drop Shadow Filters -->
+    <filter id="shadowSquircle" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#059669" flood-opacity="0.15"/>
+    </filter>
+
+    <filter id="shadowShield" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#0369a1" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+
+  <!-- Base Rounded Squircle with Crisp White/Ice Base and Luminous Rim -->
+  <rect x="20" y="20" width="472" height="472" rx="108" 
+        fill="url(#bgLightGrad)" 
+        stroke="url(#rimLightGrad)" 
+        stroke-width="14" 
+        filter="url(#shadowSquircle)"/>
+
+  <!-- Radar Coordinate Space centered at (256, 256) -->
+  <g transform="translate(256, 256)">
+    <!-- Radar Ambient Soft Background Glow -->
+    <circle r="195" fill="url(#radarLightGlow)"/>
+
+    <!-- Concentric Radar Rings in Bright Theme -->
+    <circle r="195" fill="none" stroke="#0284c7" stroke-width="2.5" stroke-opacity="0.45"/>
+    <circle r="145" fill="none" stroke="#0d9488" stroke-width="2.5" stroke-opacity="0.5" stroke-dasharray="8,6"/>
+    <circle r="95" fill="none" stroke="#059669" stroke-width="2.5" stroke-opacity="0.6"/>
+    <circle r="48" fill="none" stroke="#10b981" stroke-width="2" stroke-opacity="0.7"/>
+
+    <!-- Crosshair Coordinates & Cardinal Axes -->
+    <line x1="-195" y1="0" x2="195" y2="0" stroke="#0284c7" stroke-width="2" stroke-opacity="0.4"/>
+    <line x1="0" y1="-195" x2="0" y2="195" stroke="#0284c7" stroke-width="2" stroke-opacity="0.4"/>
+
+    <!-- Ticks on Cardinal Axes -->
+    <line x1="-145" y1="-8" x2="-145" y2="8" stroke="#0284c7" stroke-width="2.5" stroke-opacity="0.75"/>
+    <line x1="145" y1="-8" x2="145" y2="8" stroke="#0284c7" stroke-width="2.5" stroke-opacity="0.75"/>
+    <line x1="-8" y1="-145" x2="8" y2="-145" stroke="#0284c7" stroke-width="2.5" stroke-opacity="0.75"/>
+    <line x1="-8" y1="145" x2="8" y2="145" stroke="#0284c7" stroke-width="2.5" stroke-opacity="0.75"/>
+
+    <!-- Radar Sweep Beam (Light Theme Emerald/Teal Cone) -->
+    <path d="M 0 0 L 138 -138 A 195 195 0 0 1 193 -28 Z" fill="url(#sweepLightGrad)"/>
+    <!-- Leading Edge of Sweep Beam -->
+    <line x1="0" y1="0" x2="193" y2="-28" stroke="#059669" stroke-width="3" stroke-linecap="round"/>
+
+    <!-- Primary Opportunity Target (Rent Harvest Lock-in): Warm Gold/Amber Reticle at (116, -92) -->
+    <g transform="translate(116, -92)">
+      <!-- Pulse Rings -->
+      <circle r="16" fill="none" stroke="#d97706" stroke-width="2.5" stroke-opacity="0.9"/>
+      <circle r="7" fill="#f59e0b"/>
+      <!-- Target Reticle Brackets -->
+      <path d="M -12 -18 L -18 -18 L -18 -12" fill="none" stroke="#b45309" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M 12 -18 L 18 -18 L 18 -12" fill="none" stroke="#b45309" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M -12 18 L -18 18 L -18 12" fill="none" stroke="#b45309" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M 12 18 L 18 18 L 18 12" fill="none" stroke="#b45309" stroke-width="2.5" stroke-linecap="round"/>
+    </g>
+
+    <!-- Secondary Opportunity Blip at (-78, 122) -->
+    <g transform="translate(-78, 122)">
+      <circle r="10" fill="none" stroke="#0284c7" stroke-width="2" stroke-opacity="0.8"/>
+      <circle r="4.5" fill="#0284c7"/>
+    </g>
+
+    <!-- Center Fortress Defense Shield (主力堡壘核心) - Light Theme High Contrast -->
+    <g filter="url(#shadowShield)">
+      <!-- Shield Outer Body: Vibrant Gradient Shield -->
+      <path d="M 0 -58 
+               L 48 -32 
+               L 48 16 
+               C 48 46, 24 70, 0 84 
+               C -24 70, -48 46, -48 16 
+               L -48 -32 Z" 
+            fill="url(#shieldFillGrad)" 
+            stroke="#ffffff" 
+            stroke-width="4.5"/>
+
+      <!-- Shield Inner Accent Line -->
+      <path d="M 0 -46 
+               L 36 -24 
+               L 36 12 
+               C 36 36, 18 54, 0 66 
+               C -18 54, -36 36, -36 12 
+               L -36 -24 Z" 
+            fill="none" 
+            stroke="#a7f3d0" 
+            stroke-width="2" 
+            stroke-opacity="0.85"/>
+
+      <!-- Center TXO Letterform / Rising Candlestick Growth Arrow (Crisp Pure White) -->
+      <path d="M -18 10 L 0 -18 L 18 10 L 9 10 L 0 0 L -9 10 Z" fill="#ffffff"/>
+      <!-- Bottom Pivot Dot: Radiant Gold -->
+      <circle cx="0" cy="22" r="5" fill="#fde047" stroke="#b45309" stroke-width="1.5"/>
+      <!-- Top Signal Star: Bright White Star -->
+      <circle cx="0" cy="-28" r="3.5" fill="#ffffff"/>
+    </g>
+  </g>
+</svg>

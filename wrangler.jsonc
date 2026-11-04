@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "txo-pricing-dashboard",
+  "main": "src/strangle-worker.js",
+  "compatibility_date": "2026-03-01",
+  "kv_namespaces": [
+    {
+      "binding": "TXO_CACHE",
+      "id": "87f90332770a48368e0c57144f854ddb"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "35 6 * * 1-5"
+    ]
+  }
+}

@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TXO 莊家收租與超額機會雷達</title>
+    <!-- TXO Radar v2.1.0 - Real-time TAIFEX MIS Quotes Integration -->
+    <meta name="version" content="2.1.0">
+    <!-- Favicon & PWA Icons -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="manifest" href="/site.webmanifest">
+    <meta name="theme-color" content="#0f172a">
+    
+    <!-- Google Fonts: Inter, JetBrains Mono, Noto Sans TC -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700;800&family=Noto+Sans+TC:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', '"Noto Sans TC"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"PingFang TC"', '"Microsoft JhengHei UI"', '"Microsoft JhengHei"', 'sans-serif'],
+                        mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', '"Noto Sans TC"', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        body {
+            font-family: 'Inter', 'Noto Sans TC', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang TC", "Microsoft JhengHei UI", "Microsoft JhengHei", sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            text-rendering: optimizeLegibility;
+        }
+
+        /* 數字與金融數據等寬對齊 (Tabular Figures) */
+        .tabular-nums, .font-mono, [data-num] {
+            font-variant-numeric: tabular-nums;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen p-3 md:p-8">
+    <div class="max-w-7xl mx-auto">
+        <header class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4 mb-4 md:mb-6 border-b border-slate-700/80 pb-3 md:pb-4">
+            <div class="flex items-center space-x-3">
+                <img src="/favicon.svg" alt="TXO Radar Icon" class="w-9 h-9 md:w-11 md:h-11 shrink-0 drop-shadow-[0_0_12px_rgba(16,185,129,0.35)]">
+                <div>
+                    <h1 class="text-xl md:text-2xl font-bold text-emerald-400 tracking-tight">臺指選擇權「機會發現」雷達系統</h1>
+                    <p class="text-xs md:text-sm text-slate-400 mt-0.5">視角：莊家/Covered Call 賣方 | 全量 OTM 遠價外籌碼掃描與期交所真實未平倉防禦</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-2 sm:space-x-3 w-full sm:w-auto justify-between sm:justify-start">
+                <div id="market-status-badge" class="px-2.5 py-1 md:px-3 md:py-1.5 bg-slate-800 rounded-full text-[11px] md:text-xs font-medium border border-slate-700 flex items-center space-x-2">
+                    <span>偵測狀態中...</span>
+                </div>
+                <div id="benchmark-tag" class="px-2.5 py-1 md:px-3 md:py-1.5 bg-slate-800 rounded-full text-[11px] md:text-xs font-medium text-cyan-400 border border-slate-700">
+                    基準載入中...
+                </div>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2.5 md:gap-4 mb-3 md:mb-4">
+            <div class="bg-slate-800/90 p-3 md:p-4 rounded-xl border border-slate-700">
+                <div class="text-[11px] md:text-xs text-slate-400">臺指期基準價 (F)</div>
+                <div id="futures-price" class="text-xl md:text-2xl font-black font-mono text-amber-400 mt-0.5">--</div>
+            </div>
+            <div class="bg-slate-800/90 p-3 md:p-4 rounded-xl border border-slate-700">
+                <div class="text-[11px] md:text-xs text-slate-400">20日歷史波動 (HV)</div>
+                <div id="hv-val" class="text-lg md:text-xl font-bold font-mono text-sky-400 mt-0.5">--</div>
+            </div>
+            <div class="bg-slate-800/90 p-3 md:p-4 rounded-xl border border-slate-700">
+                <div class="text-[11px] md:text-xs text-slate-400">定價基準 (期限調校)</div>
+                <div id="sigma-val" class="text-lg md:text-xl font-bold font-mono text-purple-400 mt-0.5">--</div>
+            </div>
+            <div class="bg-slate-800/90 p-3 md:p-4 rounded-xl border border-slate-700">
+                <div class="text-[11px] md:text-xs text-slate-400">結算倒數天數</div>
+                <div id="active-dte-val" class="text-lg md:text-xl font-bold font-mono text-emerald-400 mt-0.5">--</div>
+                <div id="active-dte-sub" class="text-[10px] md:text-[11px] text-slate-400 font-mono mt-0.5">--</div>
+            </div>
+        </div>
+
+        <!-- 主力籌碼堡壘情報卡片 (Foreign Short Reservoir & Cycle Reset Card) -->
+        <div class="bg-slate-800/95 p-4 md:p-5 rounded-2xl border border-cyan-500/40 mb-4 md:mb-6 shadow-xl bg-gradient-to-r from-slate-800 via-slate-800 to-slate-900">
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3 pb-2 border-b border-slate-700/80">
+                <h3 class="text-sm md:text-base font-bold text-cyan-400 flex items-center">
+                    <span class="mr-2">🏰</span> <span id="fortress-cycle-badge" class="mr-1.5 px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-700 text-xs font-medium">期貨籌碼</span>外資期貨空軍部位情報 (資料日: <span id="fortress-date" class="text-white font-mono ml-1 underline">--</span>)
+                </h3>
+                <div class="flex flex-wrap items-center gap-2 md:gap-3 text-xs font-medium">
+                    <span class="text-slate-300">全市場 PCR: <span id="fortress-pcr" class="text-amber-400 font-bold font-mono">--</span></span>
+                    <span class="text-slate-500">|</span>
+                    <span class="text-slate-300">外資淨留倉: <span id="fortress-foreign-net" class="text-rose-400 font-bold font-mono">連線中...</span></span>
+                    <span class="text-slate-500">|</span>
+                    <span class="text-slate-300">空單總量: <span id="fortress-foreign-short-total" class="text-rose-400 font-bold font-mono">連線中...</span></span>
+                </div>
+            </div>
+
+            <!-- 動態警報橫幅 (Covering Alert Banner) -->
+            <div id="fortress-alert-banner" class="mb-3 p-3 rounded-xl bg-amber-950/40 border border-amber-600/50 flex items-start gap-2.5 text-xs text-amber-200">
+                <span class="text-base shrink-0">⚠️</span>
+                <div class="leading-relaxed">
+                    <span class="font-bold text-amber-300">【籌碼情報同步中】</span>
+                    <span id="fortress-alert-text">正在連線期交所同步最新外資期貨多空留倉、做空成本與未平倉防禦情報...</span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <!-- 區間 1: 外資空方起跑帶 -->
+                <div class="bg-slate-900/70 p-3 rounded-xl border border-rose-900/50 flex flex-col justify-between">
+                    <div class="text-[11px] text-slate-400 flex items-center justify-between">
+                        <span>🔴 外資空方部位起跑區間</span>
+                        <span id="fortress-zone-badge" class="text-rose-300 text-[10px] bg-rose-950/80 px-1.5 py-0.5 rounded">主力成本帶</span>
+                    </div>
+                    <div id="fortress-zone-range" class="text-rose-400 font-extrabold text-base md:text-lg mt-1 font-mono">-- ～ -- <span class="text-xs font-normal text-slate-400 font-sans">點</span></div>
+                    <div id="fortress-zone-sub" class="text-[11px] text-slate-400 mt-1">動態計算外資期貨做空建倉成本區間</div>
+                </div>
+
+                <!-- 區間 2: 雙向水庫回補監控 -->
+                <div class="bg-slate-900/70 p-3 rounded-xl border border-amber-900/50 flex flex-col justify-between">
+                    <div class="text-[11px] text-slate-400 flex items-center justify-between">
+                        <span>📉 空單連續回補監控 (水庫動態)</span>
+                        <span id="fortress-covering-badge" class="text-amber-300 text-[10px] bg-amber-950/80 px-1.5 py-0.5 rounded">計算中</span>
+                    </div>
+                    <div id="fortress-covering-stat" class="text-amber-400 font-extrabold text-lg mt-1 font-mono">-- <span class="text-xs font-normal text-slate-400 font-sans">口</span></div>
+                    <div id="fortress-covering-sub" class="text-[11px] text-slate-400 mt-1">追蹤外資空單自峰值波段變化</div>
+                </div>
+
+                <!-- 區間 3: Covered Call 建議防線 -->
+                <div class="bg-slate-900/70 p-3 rounded-xl border border-emerald-900/50 flex flex-col justify-between">
+                    <div class="text-[11px] text-slate-400 flex items-center justify-between">
+                        <span>🛡️ Covered Call 安全建議防線</span>
+                        <span class="text-emerald-400 text-[10px] bg-emerald-950/80 px-1.5 py-0.5 rounded">最佳收租帶</span>
+                    </div>
+                    <div id="fortress-safe-threshold" class="text-emerald-400 font-extrabold text-lg mt-1 font-mono">Strike > -- <span class="text-xs font-normal text-emerald-300 font-sans">點</span></div>
+                    <div class="text-[11px] text-slate-400 mt-1">避開主力做空激戰區，享空軍壓制護城河</div>
+                </div>
+            </div>
+            <div class="mt-3 pt-2 text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-700/50 leading-relaxed">
+                <span>💡 <b>雙向淨留存水庫與結算週期原理</b>：每月第三個星期三台指期結算，舊約部位清算消滅並由新月份合約接棒。外資空單並非單向累積，本系統結合「雙向淨回補監控」與「結算週期重置」，當外資連續大幅回補時啟動防線鬆動警戒，協助 Covered Call 賣方精準動態避險。</span>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-2 mb-4 md:mb-6 overflow-x-auto pb-1 no-scrollbar" id="cycle-tabs"></div>
+
+        <div class="bg-slate-800/90 rounded-2xl border border-slate-700 overflow-hidden shadow-2xl">
+            <div class="p-3 md:p-4 bg-slate-800 border-b border-slate-700 flex justify-between items-center">
+                <h2 class="font-bold text-white text-sm md:text-base flex items-center">
+                    <span class="mr-1.5 md:mr-2">📡</span> 可交易合約清單 (實質收租篩選)
+                </h2>
+                <span class="text-xs text-slate-400" id="opp-count">掃描中...</span>
+            </div>
+
+            <!-- 電腦端表格 -->
+            <div class="hidden md:block overflow-x-auto">
+                <table class="w-full text-left text-sm">
+                    <thead class="bg-slate-900/60 text-slate-400 text-xs font-mono border-b border-slate-700">
+                        <tr>
+                            <th class="p-3">履約價 (Strike)</th>
+                            <th class="p-3">距期貨價差 (%)</th>
+                            <th class="p-3 text-right">期交所 Call OI</th>
+                            <th class="p-3 text-right">當前市價</th>
+                            <th class="p-3 text-right">公允價值 (Fair)</th>
+                            <th class="p-3 text-right">超額溢價 (點數 / 幅度)</th>
+                            <th class="p-3 text-right">日均時間價值 (收租速度)</th>
+                            <th class="p-3 text-center">籌碼防禦狀態</th>
+                            <th class="p-3 text-center">莊家評價訊號</th>
+                        </tr>
+                    </thead>
+                    <tbody id="opp-tbody" class="divide-y divide-slate-700/50 font-mono">
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- 手機端卡片流 -->
+            <div class="block md:hidden p-2.5 space-y-2.5" id="opp-mobile-list">
+            </div>
+        </div>
+
+        <!-- ═══════════════════ Coverage 儀表板 ═══════════════════ -->
+        <div id="coverage-panel" class="bg-slate-800/95 p-4 md:p-5 rounded-2xl border border-amber-500/30 mt-4 md:mt-6 shadow-xl">
+            <!-- Header -->
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-4 pb-2 border-b border-slate-700/80">
+                <h3 class="text-sm md:text-base font-bold text-amber-400 flex items-center gap-2">
+                    <span>💼</span> Covered Call 結算平倉對沖 (獲利覆蓋試算)
+                    <span id="cv-selected-strike-badge" class="hidden px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-700 text-xs font-mono">-- 點</span>
+                </h3>
+                <div class="flex items-center gap-2 text-xs text-slate-400">
+                    <span class="hidden sm:inline">點擊上方合約列自動代入 →</span>
+                    <button onclick="fetchETFPrices()" class="px-2.5 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-[10px] transition border border-slate-600">↻ 更新ETF報價</button>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+                <!-- ── Left: Inputs (持倉與成本) ── -->
+                <div class="space-y-3">
+                    <div>
+                        <label class="text-xs text-slate-400">賣出 Call 口數</label>
+                        <input id="cv-contracts" type="number" min="1" step="1" value="5"
+                            class="w-full mt-1 px-3 py-1.5 bg-slate-900 border border-slate-600 rounded-lg text-white font-mono text-sm focus:border-amber-500 focus:outline-none transition">
+                    </div>
+                    <div>
+                        <label class="text-xs text-slate-400">Call 履約價（點選上方表格列代入）</label>
+                        <div id="cv-strike-display" class="mt-1 px-3 py-1.5 bg-slate-900 border border-dashed border-amber-600/40 rounded-lg text-slate-500 font-mono text-sm text-center select-none">
+                            ↑ 點擊上方任一履約價列
+                        </div>
+                    </div>
+
+                    <!-- 00631L -->
+                    <div class="p-2.5 rounded-xl bg-slate-900/60 border border-sky-900/40">
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="text-xs font-bold text-sky-400"><span class="font-mono">00631L</span> 元大台灣50正2</span>
+                            <span id="cv-etf631-now-price" class="text-[11px] text-slate-400 font-mono">市價載入中...</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 mt-1">
+                            <div>
+                                <label class="text-[10px] text-slate-500">持有張數</label>
+                                <div class="flex items-center gap-1 mt-0.5">
+                                    <input id="cv-631-holdings" type="number" min="0" step="1" value="93"
+                                        class="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-sky-300 font-mono text-sm font-bold focus:border-sky-500 focus:outline-none">
+                                    <span class="text-xs text-slate-500 shrink-0">張</span>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="text-[10px] text-slate-500">平均買進成本</label>
+                                <div class="flex items-center gap-1 mt-0.5">
+                                    <input id="cv-631-cost" type="number" min="0" step="0.01" value="33.66"
+                                        class="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-sky-300 font-mono text-sm font-bold focus:border-sky-500 focus:outline-none">
+                                    <span class="text-xs text-slate-500 shrink-0">元</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="cv-631-value" class="text-[11px] text-slate-500 font-mono mt-1 pt-1 border-t border-slate-800">未持有</div>
+                    </div>
+
+                    <!-- 00685L -->
+                    <div class="p-2.5 rounded-xl bg-slate-900/60 border border-purple-900/40">
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="text-xs font-bold text-purple-400"><span class="font-mono">00685L</span> 群益台灣加權正2</span>
+                            <span id="cv-etf685-now-price" class="text-[11px] text-slate-400 font-mono">市價載入中...</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 mt-1">
+                            <div>
+                                <label class="text-[10px] text-slate-500">持有張數</label>
+                                <div class="flex items-center gap-1 mt-0.5">
+                                    <input id="cv-685-holdings" type="number" min="0" step="1" value="192"
+                                        class="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-purple-300 font-mono text-sm font-bold focus:border-purple-500 focus:outline-none">
+                                    <span class="text-xs text-slate-500 shrink-0">張</span>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="text-[10px] text-slate-500">平均買進成本</label>
+                                <div class="flex items-center gap-1 mt-0.5">
+                                    <input id="cv-685-cost" type="number" min="0" step="0.01" value="11.68"
+                                        class="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-purple-300 font-mono text-sm font-bold focus:border-purple-500 focus:outline-none">
+                                    <span class="text-xs text-slate-500 shrink-0">元</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="cv-685-value" class="text-[11px] text-slate-500 font-mono mt-1 pt-1 border-t border-slate-800">未持有</div>
+                    </div>
+                </div>
+
+                <!-- ── Middle: Slider + Loss Result ── -->
+                <div class="flex flex-col gap-3">
+                    <div>
+                        <div class="flex justify-between items-center">
+                            <label class="text-xs text-slate-400">結算情境模擬 (拉動滑桿)</label>
+                            <span id="cv-benchmark-ref" class="text-[10px] text-slate-500 font-mono">期貨基準: --</span>
+                        </div>
+                        <input id="cv-settlement-slider" type="range" min="40000" max="55000" value="47500" step="50"
+                            class="w-full mt-2 accent-amber-500">
+                        <div class="flex justify-between items-center mt-1">
+                            <span id="cv-slider-min" class="text-[10px] text-slate-500 font-mono">--</span>
+                            <span id="cv-settlement-label" class="text-base font-bold font-mono text-amber-400">-- 點</span>
+                            <span id="cv-slider-max" class="text-[10px] text-slate-500 font-mono">--</span>
+                        </div>
+                    </div>
+
+                    <!-- 履約價位標示 -->
+                    <div id="cv-strike-marker" class="hidden text-[11px] font-mono text-center py-1 px-2 rounded-lg bg-amber-950/40 border border-amber-800/40 text-amber-300">
+                        ── 履約價 <span id="cv-strike-marker-val">--</span> 點 ──
+                    </div>
+
+                    <!-- 損益結果卡片 -->
+                    <div id="cv-result-card" class="p-4 rounded-xl border border-slate-700/80 bg-slate-900/70 flex-1 flex flex-col justify-center">
+                        <div class="text-[11px] text-slate-400 mb-1 font-mono">選擇權被突破虧損 (需用獲利弭平)</div>
+                        <div id="cv-loss-amount" class="text-xl font-bold font-mono text-slate-500">👆 請點選上方表格中的履約價</div>
+                        <div id="cv-loss-formula" class="text-[11px] text-slate-500 mt-1.5 font-mono leading-relaxed"></div>
+                    </div>
+                </div>
+
+                <!-- ── Right: ETF Sell Recommendation (邏輯平倉：用獲利彌補損失) ── -->
+                <div class="space-y-3">
+                    <div class="text-xs text-slate-400 font-mono flex items-center justify-between">
+                        <span>若 Call 被突破 → 建議獲利了結平倉張數</span>
+                        <span class="text-[10px] text-amber-400 bg-amber-950/80 px-1.5 py-0.5 rounded border border-amber-800">2x 槓桿推估</span>
+                    </div>
+
+                    <!-- 00631L 平倉建議 -->
+                    <div class="bg-slate-900/80 p-3 rounded-xl border border-sky-900/50">
+                        <div class="flex items-center justify-between mb-1.5">
+                            <div>
+                                <div class="text-xs font-bold text-sky-400"><span class="font-mono">00631L</span> 獲利弭平方案</div>
+                                <div id="cv-sell-631-est-price" class="text-[10px] text-slate-400 font-mono">結算推估市價: --</div>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-[10px] text-slate-400">需賣出</span>
+                                <span id="cv-sell-631" class="text-2xl font-black font-mono text-sky-400 ml-1">--</span>
+                                <span class="text-[10px] text-slate-500 ml-0.5">張</span>
+                            </div>
+                        </div>
+                        <div class="pt-1.5 border-t border-slate-800 text-[11px] font-mono leading-relaxed" id="cv-sell-631-detail">
+                            <span class="text-slate-500">等待選定履約價...</span>
+                        </div>
+                    </div>
+
+                    <!-- 00685L 平倉建議 -->
+                    <div class="bg-slate-900/80 p-3 rounded-xl border border-purple-900/50">
+                        <div class="flex items-center justify-between mb-1.5">
+                            <div>
+                                <div class="text-xs font-bold text-purple-400"><span class="font-mono">00685L</span> 獲利弭平方案</div>
+                                <div id="cv-sell-685-est-price" class="text-[10px] text-slate-400 font-mono">結算推估市價: --</div>
+                            </div>
+                            <div class="text-right">
+                                <span class="text-[10px] text-slate-400">需賣出</span>
+                                <span id="cv-sell-685" class="text-2xl font-black font-mono text-purple-400 ml-1">--</span>
+                                <span class="text-[10px] text-slate-500 ml-0.5">張</span>
+                            </div>
+                        </div>
+                        <div class="pt-1.5 border-t border-slate-800 text-[11px] font-mono leading-relaxed" id="cv-sell-685-detail">
+                            <span class="text-slate-500">等待選定履約價...</span>
+                        </div>
+                    </div>
+
+                    <div class="text-[10px] text-slate-500 leading-relaxed pt-0.5">
+                        * 邏輯平倉原理：利用 2x 槓桿 ETF 隨大盤上漲之「資本利得獲利」完全弭平選擇權履約損失，實現 Breakeven。其餘部位完整保全。持倉與成本已全域儲存於瀏覽器。
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-3 pt-2 text-[10px] text-slate-600 border-t border-slate-700/50 flex items-center justify-between">
+                <span>💡 報價來源：TWSE MIS 即時行情 / Yahoo Finance · 成本與持倉設定全域自動記憶</span>
+                <span id="cv-etf-updated" class="font-mono"></span>
+            </div>
+        </div>
+        </div>
+    </div>
+
+    <script>
+        let globalData = null;
+        let activeCycleIndex = 0;
+        let refreshIntervalTimer = null;
+
+        // Coverage 儀表板狀態
+        let cvStrike = 0;
+        let etfPrice631 = 36.61;
+        let etfPrice685 = 12.13;
+
+        function formatPremium(val) {
+            if (val === null || val === undefined) return "--";
+            if (val >= 999) return "+999%+";
+            return (val > 0 ? "+" : "") + val + "%";
+        }
+
+        function formatPremiumDisplay(o, cycle) {
+            const isGray = o.status_color === "gray";
+            const diff = o.premium_diff;
+            const diffSign = diff > 0 ? "+" : "";
+            const diffText = `${diffSign}${diff.toFixed(1)} 點`;
+            
+            let subText = "";
+            let subCls = isGray ? "text-slate-500" : "text-slate-400";
+            const ivInfo = o.implied_volatility ? `IV ${o.implied_volatility}%` : "";
+            
+            if (!o.is_deep_otm && o.premium_pct !== null) {
+                if (o.premium_pct <= 200.0) {
+                    const pctSign = o.premium_pct > 0 ? "+" : "";
+                    subText = `${pctSign}${o.premium_pct}%${ivInfo ? " | " + ivInfo : ""}`;
+                } else {
+                    subText = `高溢價${ivInfo ? " | " + ivInfo : ""}`;
+                }
+            } else {
+                subText = `純時間值${ivInfo ? " | " + ivInfo : ""}`;
+            }
+            
+            return {
+                diffText,
+                subText,
+                subCls
+            };
+        }
+
+        function renderOiDefenseBadge(def) {
+            if (!def) return '<span class="px-2.5 py-1 text-xs rounded-full bg-slate-800 text-slate-400 border border-slate-700">未知</span>';
+            const badgeMap = {
+                'success': 'bg-emerald-950 text-emerald-300 border-emerald-600',
+                'warning': 'bg-amber-950 text-amber-300 border-amber-600',
+                'danger': 'bg-rose-950 text-rose-300 border-rose-600',
+                'neutral': 'bg-slate-800 text-slate-300 border-slate-600'
+            };
+            const cls = badgeMap[def.badge] || 'bg-slate-800 text-slate-400 border-slate-700';
+            return `<span class="px-2.5 py-1 text-xs rounded-full border font-sans font-medium ${cls}">${def.label}</span>`;
+        }
+
+        function getMarketSessionInfo() {
+            const now = new Date();
+            const taipeiTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+            const day = taipeiTime.getDay();
+            const hh = taipeiTime.getHours();
+            const mm = taipeiTime.getMinutes();
+            const timeNum = hh * 100 + mm;
+
+            if (day >= 1 && day <= 5) {
+                if (timeNum >= 845 && timeNum < 1345) return { isOpen: true, session: "日盤" };
+                if (timeNum >= 1500) return { isOpen: true, session: "夜盤" };
+            }
+            if (day >= 2 && day <= 6) {
+                if (timeNum < 500) return { isOpen: true, session: "夜盤" };
+            }
+            return { isOpen: false, session: "休市" };
+        }
+
+        function updateMarketStatusUI(status) {
+            const badge = document.getElementById('market-status-badge');
+            if (status.isOpen) {
+                badge.className = "px-2.5 py-1 md:px-3 md:py-1.5 bg-emerald-950/80 rounded-full text-[11px] md:text-xs font-mono text-emerald-400 border border-emerald-600 flex items-center space-x-1.5";
+                badge.innerHTML = `
+                    <span class="relative flex h-2 w-2">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    <span>● ${status.session} (60秒更新)</span>
+                `;
+            } else {
+                badge.className = "px-2.5 py-1 md:px-3 md:py-1.5 bg-slate-800 rounded-full text-[11px] md:text-xs font-mono text-slate-400 border border-slate-700 flex items-center space-x-1.5";
+                badge.innerHTML = `
+                    <span>○ 休市中</span>
+                    <button onclick="refresh(true)" class="px-1.5 py-0.5 ml-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded text-[10px] transition">
+                        重整
+                    </button>
+                `;
+            }
+        }
+
+        function maintainRefreshEngine() {
+            const status = getMarketSessionInfo();
+            updateMarketStatusUI(status);
+
+            if (status.isOpen) {
+                if (!refreshIntervalTimer) {
+                    refreshIntervalTimer = setInterval(() => refresh(false), 60000);
+                }
+            } else {
+                if (refreshIntervalTimer) {
+                    clearInterval(refreshIntervalTimer);
+                    refreshIntervalTimer = null;
+                }
+            }
+        }
+
+        function renderFortressBanner() {
+            if (!globalData) return;
+            const cycle = globalData.cycles && globalData.cycles[activeCycleIndex];
+            const fortress = (cycle && cycle.oi_fortress) ? cycle.oi_fortress : globalData.oi_fortress;
+            if (!fortress) return;
+
+            const isFailed = fortress.is_fetch_failed || fortress.foreign_short_lots === null || fortress.foreign_short_lots === undefined;
+
+            document.getElementById('fortress-date').innerText = isFailed ? "更新中" : (fortress.trade_date || (cycle && cycle.expiry_date) || '');
+            document.getElementById('fortress-pcr').innerText = `${(fortress.market_pcr * 100).toFixed(2)}%`;
+
+            // 外資期貨淨留倉與總留倉 (若期交所抓取失敗，依指示顯示「抓取失敗」)
+            const foreignNetElem = document.getElementById('fortress-foreign-net');
+            if (foreignNetElem) {
+                if (isFailed) {
+                    foreignNetElem.innerHTML = `<span class="text-rose-400 font-bold">抓取失敗</span>`;
+                } else {
+                    const netLots = fortress.foreign_net_lots;
+                    const netSign = netLots > 0 ? '+' : '';
+                    foreignNetElem.innerText = `${netSign}${netLots.toLocaleString()} 口`;
+                    foreignNetElem.className = netLots < 0 ? 'text-rose-400 font-bold font-mono' : 'text-emerald-400 font-bold font-mono';
+                }
+            }
+            const foreignShortTotalElem = document.getElementById('fortress-foreign-short-total');
+            if (foreignShortTotalElem) {
+                if (isFailed) {
+                    foreignShortTotalElem.innerHTML = `<span class="text-rose-400 font-bold">抓取失敗</span>`;
+                } else {
+                    const sLots = fortress.foreign_short_lots;
+                    foreignShortTotalElem.innerText = `${sLots.toLocaleString()} 口`;
+                    foreignShortTotalElem.className = 'text-rose-400 font-bold font-mono';
+                }
+            }
+
+            // 週期徽章與名稱
+            const cycleBadgeElem = document.getElementById('fortress-cycle-badge');
+            if (cycleBadgeElem && fortress.cycle_name) {
+                cycleBadgeElem.innerText = fortress.cycle_name;
+            }
+
+            // 外資空方部位起跑/成本區間 (每日依期交所平均做空成本動態更新)
+            const rangeElem = document.getElementById('fortress-zone-range');
+            const zoneSubElem = document.getElementById('fortress-zone-sub');
+            const zBottom = fortress.zone_bottom;
+            const zTop = fortress.zone_top || fortress.primary_call_wall;
+
+            if (rangeElem) {
+                if (isFailed || !zBottom || !zTop) {
+                    rangeElem.innerHTML = `<span class="text-slate-400 text-sm font-sans font-normal">期交所更新中 / 抓取失敗</span>`;
+                } else {
+                    rangeElem.innerHTML = `${zBottom.toLocaleString()} ～ ${zTop.toLocaleString()} <span class="text-xs font-normal text-slate-400 font-sans">點</span>`;
+                }
+            }
+            if (zoneSubElem) {
+                if (isFailed) {
+                    zoneSubElem.innerText = "等待期交所公佈最新籌碼";
+                } else if (fortress.foreign_short_cost) {
+                    zoneSubElem.innerText = `外資做空成本約 ${fortress.foreign_short_cost.toLocaleString()} 點・防守基準帶`;
+                } else {
+                    zoneSubElem.innerText = fortress.is_settlement_reset ? "舊約結算歸零・新合約換月起跑基準" : "外資空單防守基準帶";
+                }
+            }
+
+            // 空單回補動態水庫 (每日依峰值與連續天數動態更新)
+            const streakDays = fortress.covering_streak_days || 0;
+            const coveringLots = fortress.covering_lots || 0;
+            const peakLots = fortress.prev_peak_lots || 0;
+            const currentLots = fortress.foreign_short_lots || 0;
+            const diffLots = fortress.daily_diff_lots;
+
+            const covBadgeElem = document.getElementById('fortress-covering-badge');
+            if (covBadgeElem) {
+                if (isFailed) {
+                    covBadgeElem.innerText = "未取得";
+                    covBadgeElem.className = "text-slate-400 text-[10px] bg-slate-900 px-1.5 py-0.5 rounded";
+                } else if (streakDays >= 2) {
+                    covBadgeElem.innerText = `連續 ${streakDays} 日回補`;
+                    covBadgeElem.className = "text-amber-300 text-[10px] bg-amber-950/80 px-1.5 py-0.5 rounded";
+                } else if (diffLots !== undefined) {
+                    const diffSign = diffLots >= 0 ? '+' : '';
+                    covBadgeElem.innerText = `日變動 ${diffSign}${diffLots.toLocaleString()} 口`;
+                    covBadgeElem.className = diffLots <= 0 ? "text-emerald-300 text-[10px] bg-emerald-950/80 px-1.5 py-0.5 rounded" : "text-rose-300 text-[10px] bg-rose-950/80 px-1.5 py-0.5 rounded";
+                }
+            }
+            const covStatElem = document.getElementById('fortress-covering-stat');
+            if (covStatElem) {
+                if (isFailed || !peakLots) {
+                    covStatElem.innerHTML = `<span class="text-slate-400 text-sm font-sans font-normal">--</span>`;
+                } else {
+                    const covSign = coveringLots >= 0 ? '-' : '+';
+                    covStatElem.innerHTML = `${covSign}${Math.abs(coveringLots).toLocaleString()} <span class="text-xs font-normal text-slate-400 font-sans">口 (自峰值平倉)</span>`;
+                }
+            }
+            const covSubElem = document.getElementById('fortress-covering-sub');
+            if (covSubElem) {
+                if (isFailed || !peakLots) {
+                    covSubElem.innerText = "等待期交所籌碼資料更新";
+                } else {
+                    const diffStr = (diffLots !== undefined) ? ` (今日: ${diffLots >= 0 ? '+' : ''}${diffLots.toLocaleString()} 口)` : '';
+                    covSubElem.innerText = `峰值 ${peakLots.toLocaleString()} ➔ 目前 ${currentLots.toLocaleString()} 口${diffStr}`;
+                }
+            }
+
+            // 警報橫幅 (由後端依數據動態生成，非寫死靜態字串)
+            const alertBanner = document.getElementById('fortress-alert-banner');
+            const alertText = document.getElementById('fortress-alert-text');
+            if (alertBanner && alertText) {
+                if (fortress.warning_msg) {
+                    alertText.innerText = fortress.warning_msg;
+                    alertBanner.classList.remove('hidden');
+                } else {
+                    alertBanner.classList.add('hidden');
+                }
+            }
+
+            // Covered Call 安全建議防線 (每日依動態防守天花板更新)
+            const safeElem = document.getElementById('fortress-safe-threshold');
+            if (safeElem) {
+                if (isFailed || !zTop) {
+                    safeElem.innerHTML = `<span class="text-slate-400 text-sm font-sans font-normal">--</span>`;
+                } else {
+                    safeElem.innerHTML = `Strike > ${zTop.toLocaleString()} <span class="text-xs font-normal text-emerald-300 font-sans">點</span>`;
+                }
+            }
+        }
+
+        function renderTabs() {
+            const tabsContainer = document.getElementById('cycle-tabs');
+            tabsContainer.innerHTML = globalData.cycles.map((cycle, idx) => {
+                const isActive = idx === activeCycleIndex;
+                const activeClass = "bg-emerald-600 text-white border-emerald-500 shadow-md font-bold";
+                const inactiveClass = "bg-slate-800 text-slate-400 hover:bg-slate-700 border-slate-700";
+                const displayDays = cycle.display_days !== undefined ? cycle.display_days : Math.max(1, Math.ceil(cycle.days_to_expiry));
+                const dteText = cycle.days_to_expiry <= 0.5 ? "今天結算" : `剩 ${displayDays} 天`;
+                return `
+                    <button onclick="switchTab(${idx})" 
+                            class="px-3 py-1.5 md:px-4 md:py-2 rounded-lg md:rounded-xl text-xs md:text-sm border transition duration-150 whitespace-nowrap shrink-0 ${isActive ? activeClass : inactiveClass}">
+                        ${cycle.label} (${cycle.expiry_date.slice(5)} · ${dteText})
+                    </button>
+                `;
+            }).join('');
+        }
+
+        function renderTable() {
+            const cycle = globalData.cycles[activeCycleIndex];
+            const displayDays = cycle.display_days !== undefined ? cycle.display_days : Math.max(1, Math.ceil(cycle.days_to_expiry));
+            const isToday = cycle.days_to_expiry <= 0.5;
+            document.getElementById('active-dte-val').innerText = isToday ? `今天結算 (${cycle.expiry_date.slice(5)})` : `剩 ${displayDays} 天 (${cycle.expiry_date.slice(5)})`;
+            const dteSub = document.getElementById('active-dte-sub');
+            if (dteSub) {
+                dteSub.innerText = `模型計價基準: ${cycle.days_to_expiry} 天`;
+            }
+            document.getElementById('sigma-val').innerText = `${cycle.fair_sigma_pct}%`;
+            document.getElementById('opp-count').innerText = `共 ${cycle.opportunities.length} 檔可交易合約 (門檻: 市價 ≥ ${cycle.min_premium} 點 · 異常以灰色標註)`;
+
+            renderFortressBanner();
+
+            const tbody = document.getElementById('opp-tbody');
+            const mobList = document.getElementById('opp-mobile-list');
+
+            if (cycle.opportunities.length === 0) {
+                const emptyMsg = `該到期日目前無有效之價外買權合約`;
+                tbody.innerHTML = `<tr><td colspan="9" class="p-8 text-center text-slate-500">${emptyMsg}</td></tr>`;
+                mobList.innerHTML = `<div class="p-8 text-center text-slate-500">${emptyMsg}</div>`;
+                return;
+            }
+
+            tbody.innerHTML = cycle.opportunities.map(o => {
+                const isGray = o.status_color === 'gray';
+                const isBlue = o.status_color === 'blue';
+                const isAnchorBadge = o.is_anchor ? `<span class="ml-2 px-1.5 py-0.5 text-[10px] bg-sky-950 text-sky-400 border border-sky-800 rounded">基準參考</span>` : '';
+                const signalBadge = isGray
+                    ? `<span class="px-2.5 py-1 text-xs rounded-full bg-slate-800 text-slate-400 border border-slate-600 font-sans font-medium">${o.signal}</span>`
+                    : (isBlue
+                        ? `<span class="px-2.5 py-1 text-xs rounded-full bg-sky-950/80 text-sky-300 border border-sky-700/70 font-sans font-medium">${o.signal}</span>`
+                        : (o.status_color === 'green' 
+                            ? `<span class="px-2.5 py-1 text-xs rounded-full bg-emerald-950 text-emerald-300 border border-emerald-600 font-sans font-medium">${o.signal}</span>`
+                            : (o.status_color === 'yellow' 
+                                ? `<span class="px-2.5 py-1 text-xs rounded-full bg-amber-950 text-amber-300 border border-amber-600 font-sans">${o.signal}</span>`
+                                : (o.status_color === 'red'
+                                    ? `<span class="px-2.5 py-1 text-xs rounded-full bg-rose-950 text-rose-300 border border-rose-600 font-sans">${o.signal}</span>`
+                                    : `<span class="px-2.5 py-1 text-xs rounded-full bg-slate-800 text-slate-400 font-sans">${o.signal}</span>`))));
+
+                const defenseBadge = renderOiDefenseBadge(o.oi_defense);
+                const premDisplay = formatPremiumDisplay(o, cycle);
+                const oiText = o.open_interest ? `${o.open_interest.toLocaleString()} 口` : '--';
+                const rowCls = isGray
+                    ? 'opacity-55 bg-slate-950/40 text-slate-400 hover:bg-slate-800/40 transition'
+                    : (isBlue
+                        ? 'hover:bg-slate-700/30 text-slate-200 transition'
+                        : (o.status_color === 'green' ? 'bg-emerald-950/10 hover:bg-slate-700/30 transition' : 'hover:bg-slate-700/30 transition'));
+                const premiumCls = isGray ? 'text-slate-400' : (isBlue ? 'text-sky-300' : (o.premium_diff >= 10 ? 'text-emerald-400' : (o.premium_diff < 0 ? 'text-rose-400' : 'text-amber-400')));
+                const mPriceCls = isGray ? 'text-slate-400' : (isBlue ? 'text-sky-300' : 'text-amber-400');
+                const decayCls = isGray ? 'text-slate-400' : (isBlue ? 'text-slate-300' : 'text-emerald-400');
+
+                const isSelectedRow = (cvStrike > 0 && o.strike === cvStrike);
+                const selectedGlow = isSelectedRow ? ' ring-1 ring-inset ring-amber-500/50 bg-amber-950/5' : '';
+                return `
+                    <tr class="${rowCls}${selectedGlow} cursor-pointer" onclick="selectStrike(${o.strike})" title="點擊帶入平倉模擬">
+                        <td class="p-3 font-bold ${isGray ? 'text-slate-400' : 'text-white'} text-base">
+                            ${o.strike} ${isAnchorBadge}
+                        </td>
+                        <td class="p-3 text-slate-300">+${o.otm_pct}%</td>
+                        <td class="p-3 text-right font-mono ${isGray ? 'text-slate-500' : 'text-cyan-300'} font-bold">${oiText}</td>
+                        <td class="p-3 text-right font-bold ${mPriceCls} text-base">${o.market_price} <span class="text-xs font-normal text-slate-500">點</span></td>
+                        <td class="p-3 text-right">
+                            <div class="font-bold text-slate-300">${o.fair_price} <span class="text-xs font-normal text-slate-500">點</span></div>
+                            <div class="text-[10px] text-slate-500 font-mono">HV ${cycle.fair_sigma_pct}%</div>
+                        </td>
+                        <td class="p-3 text-right font-bold ${premiumCls}">
+                            <div class="text-base font-mono">${premDisplay.diffText}</div>
+                            <div class="text-[11px] font-mono font-normal ${premDisplay.subCls}">${premDisplay.subText}</div>
+                        </td>
+                        <td class="p-3 text-right">
+                            <div class="${decayCls} font-bold">${o.daily_decay} <span class="text-xs font-normal text-slate-400">點/天</span></div>
+                            <div class="text-xs text-slate-400">約 NT$ ${o.daily_income_ntd.toLocaleString()} /口/天</div>
+                        </td>
+                        <td class="p-3 text-center">${defenseBadge}</td>
+                        <td class="p-3 text-center">${signalBadge}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            mobList.innerHTML = cycle.opportunities.map(o => {
+                const isGray = o.status_color === 'gray';
+                const isBlue = o.status_color === 'blue';
+                const isAnchorBadge = o.is_anchor ? `<span class="px-1.5 py-0.5 text-[10px] bg-sky-950 text-sky-400 border border-sky-800 rounded">基準</span>` : '';
+                const signalBadge = isGray
+                    ? `<span class="px-2 py-0.5 text-[11px] rounded-full bg-slate-800 text-slate-400 border border-slate-600 font-sans font-medium">${o.signal}</span>`
+                    : (isBlue
+                        ? `<span class="px-2 py-0.5 text-[11px] rounded-full bg-sky-950/80 text-sky-300 border border-sky-700/70 font-sans font-medium">${o.signal}</span>`
+                        : (o.status_color === 'green'
+                            ? `<span class="px-2 py-0.5 text-[11px] rounded-full bg-emerald-950 text-emerald-300 border border-emerald-600 font-sans font-medium">${o.signal}</span>`
+                            : (o.status_color === 'yellow'
+                                ? `<span class="px-2 py-0.5 text-[11px] rounded-full bg-amber-950 text-amber-300 border border-amber-600 font-sans">${o.signal}</span>`
+                                : (o.status_color === 'red'
+                                    ? `<span class="px-2 py-0.5 text-[11px] rounded-full bg-rose-950 text-rose-300 border border-rose-600 font-sans">${o.signal}</span>`
+                                    : `<span class="px-2 py-0.5 text-[11px] rounded-full bg-slate-800 text-slate-400 font-sans">${o.signal}</span>`))));
+
+                const defenseBadge = renderOiDefenseBadge(o.oi_defense);
+                const premDisplay = formatPremiumDisplay(o, cycle);
+                const premiumColor = isGray ? 'text-slate-400' : (isBlue ? 'text-sky-300' : (o.premium_diff >= 10 ? 'text-emerald-400' : (o.premium_diff < 0 ? 'text-rose-400' : 'text-amber-400')));
+                const oiText = o.open_interest ? `${o.open_interest.toLocaleString()} 口` : '--';
+                const cardCls = isGray
+                    ? 'p-3.5 bg-slate-900/50 rounded-xl border border-slate-800 shadow-sm opacity-60'
+                    : (isBlue
+                        ? 'p-3.5 bg-slate-800/90 rounded-xl border border-sky-900/50 shadow-sm'
+                        : (o.status_color === 'green'
+                            ? 'p-3.5 bg-slate-800/90 rounded-xl border border-emerald-700/40 bg-emerald-950/15 shadow-sm'
+                            : 'p-3.5 bg-slate-800/90 rounded-xl border border-slate-700/80 shadow-sm'));
+
+                return `
+                    <div class="${cardCls} cursor-pointer" onclick="selectStrike(${o.strike})" title="點擊帶入平倉模擬">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center space-x-1.5">
+                                <span class="text-lg font-bold ${isGray ? 'text-slate-400' : 'text-white'} font-mono">${o.strike}</span>
+                                <span class="text-xs text-slate-400 font-mono">+${o.otm_pct}%</span>
+                                ${isAnchorBadge}
+                            </div>
+                            <div>${signalBadge}</div>
+                        </div>
+                        <div class="mb-2 grid grid-cols-2 gap-2 text-xs">
+                            <div class="bg-slate-900/50 px-2.5 py-1.5 rounded-lg border border-slate-700/50 flex items-center justify-between">
+                                <span class="text-slate-400">Call OI:</span>
+                                <span class="font-mono ${isGray ? 'text-slate-500' : 'text-cyan-300'} font-bold">${oiText}</span>
+                            </div>
+                            <div class="bg-slate-900/50 px-2.5 py-1.5 rounded-lg border border-slate-700/50 flex items-center justify-between">
+                                <span class="text-slate-400">籌碼防線:</span>
+                                <div>${defenseBadge}</div>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-3 gap-2 pt-2 border-t border-slate-700/50">
+                            <div>
+                                <div class="text-[10px] text-slate-400">市價 / 公允</div>
+                                <div class="font-bold ${isGray ? 'text-slate-400' : 'text-amber-400'} font-mono text-sm leading-tight">${o.market_price} <span class="text-[10px] text-slate-500 font-normal">點</span></div>
+                                <div class="text-[10px] text-slate-500 font-mono mt-0.5">公允 ${o.fair_price} <span class="text-[9px] text-slate-600">(HV${cycle.fair_sigma_pct}%)</span></div>
+                            </div>
+                            <div class="text-center">
+                                <div class="text-[10px] text-slate-400">超額溢價</div>
+                                <div class="font-bold font-mono text-sm ${premiumColor} mt-0.5">${premDisplay.diffText}</div>
+                                <div class="text-[10px] ${premDisplay.subCls} font-mono mt-0.5 truncate">${premDisplay.subText}</div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-[10px] text-slate-400">收租速度</div>
+                                <div class="font-bold ${isGray ? 'text-slate-400' : 'text-emerald-400'} font-bold font-mono text-sm leading-tight">${o.daily_decay} <span class="text-[10px] text-slate-400 font-normal">點/天</span></div>
+                                <div class="text-[10px] text-slate-400 font-mono mt-0.5">≈ NT$ ${o.daily_income_ntd.toLocaleString()}/天</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function switchTab(index) {
+            activeCycleIndex = index;
+            renderTabs();
+            renderTable();
+        }
+
+        async function refresh(isManual = false) {
+            try {
+                const res = await fetch('/api/analysis?t=' + Date.now());
+                if (!res.ok) {
+                    throw new Error(`HTTP ${res.status}`);
+                }
+
+                globalData = await res.json();
+                
+                document.getElementById('benchmark-tag').innerText = `基準：${globalData.benchmark_name}`;
+                document.getElementById('futures-price').innerText = globalData.futures_price.toLocaleString();
+                document.getElementById('hv-val').innerText = `${globalData.hv20_pct}%`;
+
+                if (globalData.cycles && activeCycleIndex >= globalData.cycles.length) {
+                    activeCycleIndex = 0;
+                }
+
+                renderTabs();
+                renderTable();
+                initCoverageSlider();
+            } catch(e) {
+                console.error("載入失敗", e);
+                if (!globalData) {
+                    document.getElementById('benchmark-tag').innerText = "連線重試中...";
+                    document.getElementById('opp-count').innerText = `⚠️ 載入中 (${e.message || '連線逾時，正自動重試...'})`;
+                    setTimeout(() => refresh(), 3000);
+                } else {
+                    document.getElementById('benchmark-tag').innerText = `基準：${globalData.benchmark_name} (連線重試中)`;
+                }
+            }
+        }
+
+        refresh();
+        maintainRefreshEngine();
+        setInterval(maintainRefreshEngine, 15000);
+
+        // ── Coverage 儀表板初始化 ──
+        loadCoverageStorage();
+        fetchETFPrices();
+        setInterval(fetchETFPrices, 600000);
+
+        document.getElementById('cv-settlement-slider').addEventListener('input', function() {
+            document.getElementById('cv-settlement-label').innerText = parseInt(this.value).toLocaleString() + ' 點';
+            calcCoverage();
+        });
+
+        // 綁定所有輸入欄位：輸入時自動儲存至 localStorage 並即時重算
+        ['cv-contracts', 'cv-631-holdings', 'cv-631-cost', 'cv-685-holdings', 'cv-685-cost'].forEach(function(id) {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener('input', function() {
+                    saveCoverageStorage();
+                    updateHoldingsDisplay();
+                    calcCoverage();
+                });
+            }
+        });
+
+        // ── Coverage 儀表板全域記憶 (localStorage) ──
+        function loadCoverageStorage() {
+            try {
+                if (localStorage.getItem('txo_cv_contracts')) {
+                    document.getElementById('cv-contracts').value = localStorage.getItem('txo_cv_contracts');
+                }
+                if (localStorage.getItem('txo_cv_631_holdings')) {
+                    document.getElementById('cv-631-holdings').value = localStorage.getItem('txo_cv_631_holdings');
+                }
+                if (localStorage.getItem('txo_cv_631_cost')) {
+                    document.getElementById('cv-631-cost').value = localStorage.getItem('txo_cv_631_cost');
+                }
+                if (localStorage.getItem('txo_cv_685_holdings')) {
+                    document.getElementById('cv-685-holdings').value = localStorage.getItem('txo_cv_685_holdings');
+                }
+                if (localStorage.getItem('txo_cv_685_cost')) {
+                    document.getElementById('cv-685-cost').value = localStorage.getItem('txo_cv_685_cost');
+                }
+            } catch (e) {
+                console.warn('localStorage read error:', e);
+            }
+        }
+
+        function saveCoverageStorage() {
+            try {
+                localStorage.setItem('txo_cv_contracts', document.getElementById('cv-contracts').value);
+                localStorage.setItem('txo_cv_631_holdings', document.getElementById('cv-631-holdings').value);
+                localStorage.setItem('txo_cv_631_cost', document.getElementById('cv-631-cost').value);
+                localStorage.setItem('txo_cv_685_holdings', document.getElementById('cv-685-holdings').value);
+                localStorage.setItem('txo_cv_685_cost', document.getElementById('cv-685-cost').value);
+            } catch (e) {
+                console.warn('localStorage write error:', e);
+            }
+        }
+
+        function initCoverageSlider() {
+            if (!globalData) return;
+            const F = Math.round(globalData.futures_price);
+            const minVal = Math.round(F - 3000);
+            const maxVal = Math.round(F + 4000);
+            const slider = document.getElementById('cv-settlement-slider');
+            slider.min = minVal;
+            slider.max = maxVal;
+            slider.step = 50;
+
+            const curVal = parseInt(slider.value);
+            if (isNaN(curVal) || curVal < minVal || curVal > maxVal || curVal === 47300 || curVal === 22500 || curVal === 47500) {
+                slider.value = F;
+            }
+            document.getElementById('cv-slider-min').innerText = minVal.toLocaleString();
+            document.getElementById('cv-slider-max').innerText = maxVal.toLocaleString();
+            document.getElementById('cv-settlement-label').innerText = parseInt(slider.value).toLocaleString() + ' 點';
+            const bRef = document.getElementById('cv-benchmark-ref');
+            if (bRef) bRef.innerText = '期貨基準: ' + F.toLocaleString() + ' 點';
+            calcCoverage();
+        }
+
+        function selectStrike(strike) {
+            cvStrike = strike;
+            const disp = document.getElementById('cv-strike-display');
+            disp.innerText = strike.toLocaleString() + ' 點 ✓ (已鎖定)';
+            disp.className = 'mt-1 px-3 py-1.5 bg-slate-900 border border-amber-500 rounded-lg text-amber-300 font-mono text-sm text-center font-bold';
+            document.getElementById('cv-strike-marker-val').innerText = strike.toLocaleString();
+            document.getElementById('cv-strike-marker').classList.remove('hidden');
+            const badge = document.getElementById('cv-selected-strike-badge');
+            badge.innerText = strike.toLocaleString() + ' 點 (選定中)';
+            badge.classList.remove('hidden');
+
+            // 貼心體驗：若目前結算情境小於等於履約價，預設將滑桿推進到 (履約價 + 150 點) 方便直接預覽突破平倉試算
+            const slider = document.getElementById('cv-settlement-slider');
+            if (slider && parseInt(slider.value) <= strike) {
+                slider.value = strike + 150;
+                document.getElementById('cv-settlement-label').innerText = (strike + 150).toLocaleString() + ' 點';
+            }
+
+            const panel = document.getElementById('coverage-panel');
+            if (panel) {
+                panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+            if (globalData) renderTable();
+            calcCoverage();
+        }
+
+        async function fetchETFPrices() {
+            try {
+                const res = await fetch('/api/etf-prices');
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data['00631L']) etfPrice631 = data['00631L'];
+                if (data['00685L']) etfPrice685 = data['00685L'];
+                const updAt = data['updated_at'] || '';
+                
+                const el631 = document.getElementById('cv-etf631-now-price');
+                if (el631) el631.innerText = `現價: $${etfPrice631.toFixed(2)}`;
+                const el685 = document.getElementById('cv-etf685-now-price');
+                if (el685) el685.innerText = `現價: $${etfPrice685.toFixed(2)}`;
+
+                document.getElementById('cv-etf-updated').innerText = updAt ? '更新：' + updAt : '';
+                updateHoldingsDisplay();
+                calcCoverage();
+            } catch(e) {
+                console.warn('ETF prices fetch failed', e);
+            }
+        }
+
+        function updateHoldingsDisplay() {
+            const h631 = parseInt(document.getElementById('cv-631-holdings').value) || 0;
+            const c631 = parseFloat(document.getElementById('cv-631-cost').value) || 0;
+            const h685 = parseInt(document.getElementById('cv-685-holdings').value) || 0;
+            const c685 = parseFloat(document.getElementById('cv-685-cost').value) || 0;
+
+            const val631 = h631 * etfPrice631 * 1000;
+            const val685 = h685 * etfPrice685 * 1000;
+
+            const pl631 = h631 > 0 && c631 > 0 ? (etfPrice631 - c631) * h631 * 1000 : 0;
+            const pl685 = h685 > 0 && c685 > 0 ? (etfPrice685 - c685) * h685 * 1000 : 0;
+
+            const plSign631 = pl631 >= 0 ? '+' : '';
+            const plSign685 = pl685 >= 0 ? '+' : '';
+
+            document.getElementById('cv-631-value').innerHTML =
+                h631 > 0
+                    ? `現值 ≈ NT$ ${Math.round(val631).toLocaleString()} | 浮盈: <span class="${pl631>=0?'text-emerald-400':'text-rose-400'} font-bold">${plSign631}NT$ ${Math.round(pl631).toLocaleString()}</span>`
+                    : '未持有';
+
+            document.getElementById('cv-685-value').innerHTML =
+                h685 > 0
+                    ? `現值 ≈ NT$ ${Math.round(val685).toLocaleString()} | 浮盈: <span class="${pl685>=0?'text-emerald-400':'text-rose-400'} font-bold">${plSign685}NT$ ${Math.round(pl685).toLocaleString()}</span>`
+                    : '未持有';
+        }
+
+        function calcCoverage() {
+            const contracts = parseInt(document.getElementById('cv-contracts').value) || 0;
+            const settlement = parseInt(document.getElementById('cv-settlement-slider').value) || 0;
+            const h631 = parseInt(document.getElementById('cv-631-holdings').value) || 0;
+            const c631 = parseFloat(document.getElementById('cv-631-cost').value) || 0;
+            const h685 = parseInt(document.getElementById('cv-685-holdings').value) || 0;
+            const c685 = parseFloat(document.getElementById('cv-685-cost').value) || 0;
+
+            const F = (globalData && globalData.futures_price) ? globalData.futures_price : settlement;
+            // 大盤漲跌幅
+            const marketChangePct = F > 0 ? (settlement - F) / F : 0;
+            // 2倍槓桿 ETF 隨大盤推估之結算市價
+            const estPrice631 = Math.max(0.1, etfPrice631 * (1 + 2 * marketChangePct));
+            const estPrice685 = Math.max(0.1, etfPrice685 * (1 + 2 * marketChangePct));
+
+            document.getElementById('cv-sell-631-est-price').innerText = `結算推估市價: $${estPrice631.toFixed(2)} (大盤 ${marketChangePct>=0?'+':''}${(marketChangePct*100).toFixed(2)}% × 2倍)`;
+            document.getElementById('cv-sell-685-est-price').innerText = `結算推估市價: $${estPrice685.toFixed(2)} (大盤 ${marketChangePct>=0?'+':''}${(marketChangePct*100).toFixed(2)}% × 2倍)`;
+
+            const resultCard = document.getElementById('cv-result-card');
+            const lossEl = document.getElementById('cv-loss-amount');
+            const formulaEl = document.getElementById('cv-loss-formula');
+
+            if (!cvStrike || cvStrike <= 0) {
+                resultCard.className = 'p-4 rounded-xl border border-slate-700/80 bg-slate-900/70 flex-1 flex flex-col justify-center';
+                lossEl.className = 'text-xl font-bold font-mono text-slate-500';
+                lossEl.innerText = '👆 請點選上方表格中的履約價';
+                formulaEl.innerText = '點擊上方任意報價行即可代入，即時模擬履約結算平倉需求。';
+                document.getElementById('cv-sell-631').innerText = '--';
+                document.getElementById('cv-sell-685').innerText = '--';
+                document.getElementById('cv-sell-631-detail').innerHTML = '<span class="text-slate-500">等待選定履約價...</span>';
+                document.getElementById('cv-sell-685-detail').innerHTML = '<span class="text-slate-500">等待選定履約價...</span>';
+                return;
+            }
+
+            if (settlement <= cvStrike) {
+                // Call 未被執行
+                resultCard.className = 'p-4 rounded-xl border border-emerald-600/50 bg-emerald-950/20 flex-1 flex flex-col justify-center';
+                lossEl.className = 'text-2xl font-black font-mono text-emerald-400';
+                lossEl.innerText = '🛡️ 安全結算 (Call 歸零)';
+                formulaEl.innerHTML = `<span class="text-slate-300">結算價 ${settlement.toLocaleString()} ≤ 履約價 ${cvStrike.toLocaleString()} 點</span><br><span class="text-emerald-400">買權未被履約，全額賺取權利金收租，現貨部位無需任何平倉！</span>`;
+                document.getElementById('cv-sell-631').innerText = '0';
+                document.getElementById('cv-sell-685').innerText = '0';
+                document.getElementById('cv-sell-631-detail').innerHTML = `<span class="text-emerald-400 font-bold">無需賣出！</span> 持有的 ${h631} 張 00631L 完整保全繼續獲利。`;
+                document.getElementById('cv-sell-685-detail').innerHTML = `<span class="text-emerald-400 font-bold">無需賣出！</span> 持有的 ${h685} 張 00685L 完整保全繼續獲利。`;
+                return;
+            }
+
+            // Call 被執行，計算虧損
+            const diff = settlement - cvStrike;
+            const loss = diff * contracts * 50;
+
+            resultCard.className = 'p-4 rounded-xl border border-rose-600/60 bg-rose-950/30 flex-1 flex flex-col justify-center';
+            lossEl.className = 'text-2xl font-black font-mono text-rose-400';
+            lossEl.innerText = '▼ NT$ ' + loss.toLocaleString();
+            formulaEl.innerHTML = `<span class="text-slate-300">價差突破: +${diff.toLocaleString()} 點 × ${contracts} 口 × NT$50</span><br><span class="text-amber-300">需靠現貨獲利了結 NT$ ${loss.toLocaleString()} 來完全沖抵選擇權損失</span>`;
+
+            // 00631L 獲利平倉換算
+            const profitPerLot631 = (estPrice631 - c631) * 1000;
+            if (profitPerLot631 > 0) {
+                const lotsNeeded = Math.ceil(loss / profitPerLot631);
+                const totalGainRealized = lotsNeeded * profitPerLot631;
+                const isShortage = h631 > 0 && lotsNeeded > h631;
+                
+                document.getElementById('cv-sell-631').innerText = lotsNeeded;
+                document.getElementById('cv-sell-631').className =
+                    'text-2xl font-black font-mono ' + (isShortage ? 'text-rose-400' : 'text-sky-400');
+
+                let detailHtml = `單張賺利 <span class="text-emerald-400 font-bold">+NT$ ${Math.round(profitPerLot631).toLocaleString()}</span> (結算價 $${estPrice631.toFixed(2)} - 成本 $${c631.toFixed(2)})<br>`;
+                detailHtml += `賣出 ${lotsNeeded} 張獲利了結共實現 <span class="text-emerald-300 font-bold">NT$ ${Math.round(totalGainRealized).toLocaleString()}</span>，正好弭平選擇權 NT$ ${loss.toLocaleString()} 損失！<br>`;
+                if (h631 > 0) {
+                    if (isShortage) {
+                        detailHtml += `<span class="text-rose-400 font-bold">⚠️ 超出持倉：</span>現有 ${h631} 張，不足 ${lotsNeeded - h631} 張`;
+                    } else {
+                        detailHtml += `<span class="text-sky-300 font-bold">平倉後仍保全 ${h631 - lotsNeeded} 張</span> 現貨部位繼續滾動牛市利潤！`;
+                    }
+                }
+                document.getElementById('cv-sell-631-detail').innerHTML = detailHtml;
+            } else {
+                document.getElementById('cv-sell-631').innerText = '--';
+                document.getElementById('cv-sell-631-detail').innerHTML =
+                    `<span class="text-amber-400">⚠️ 結算推估價 ($${estPrice631.toFixed(2)}) 低於成本價 ($${c631.toFixed(2)})，目前單張處於虧損狀態，無法以獲利平倉。</span>`;
+            }
+
+            // 00685L 獲利平倉換算
+            const profitPerLot685 = (estPrice685 - c685) * 1000;
+            if (profitPerLot685 > 0) {
+                const lotsNeeded = Math.ceil(loss / profitPerLot685);
+                const totalGainRealized = lotsNeeded * profitPerLot685;
+                const isShortage = h685 > 0 && lotsNeeded > h685;
+
+                document.getElementById('cv-sell-685').innerText = lotsNeeded;
+                document.getElementById('cv-sell-685').className =
+                    'text-2xl font-black font-mono ' + (isShortage ? 'text-rose-400' : 'text-purple-400');
+
+                let detailHtml = `單張賺利 <span class="text-emerald-400 font-bold">+NT$ ${Math.round(profitPerLot685).toLocaleString()}</span> (結算價 $${estPrice685.toFixed(2)} - 成本 $${c685.toFixed(2)})<br>`;
+                detailHtml += `賣出 ${lotsNeeded} 張獲利了結共實現 <span class="text-emerald-300 font-bold">NT$ ${Math.round(totalGainRealized).toLocaleString()}</span>，正好弭平選擇權 NT$ ${loss.toLocaleString()} 損失！<br>`;
+                if (h685 > 0) {
+                    if (isShortage) {
+                        detailHtml += `<span class="text-rose-400 font-bold">⚠️ 超出持倉：</span>現有 ${h685} 張，不足 ${lotsNeeded - h685} 張`;
+                    } else {
+                        detailHtml += `<span class="text-purple-300 font-bold">平倉後仍保全 ${h685 - lotsNeeded} 張</span> 現貨部位繼續滾動牛市利潤！`;
+                    }
+                }
+                document.getElementById('cv-sell-685-detail').innerHTML = detailHtml;
+            } else {
+                document.getElementById('cv-sell-685').innerText = '--';
+                document.getElementById('cv-sell-685-detail').innerHTML =
+                    `<span class="text-amber-400">⚠️ 結算推估價 ($${estPrice685.toFixed(2)}) 低於成本價 ($${c685.toFixed(2)})，目前單張處於虧損狀態，無法以獲利平倉。</span>`;
+            }
+        }
+    </script>
+</body>
+</html>
