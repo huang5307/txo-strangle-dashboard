@@ -1053,57 +1053,113 @@ function renderPositionMonitor() {
                 }
 
                 // ==========================================
-                // 四大核心情境提醒規則引擎（極簡明瞭、直指動作）
+                // 四大核心情境提醒規則引擎（分級制：預警 vs 強制轉倉）
                 // ==========================================
-                const isCallThreat = pos.has_call && (curCallDelta > 0.30 || callDist < 1.0);
-                const isPutThreat = pos.has_put && (curPutDelta > 0.30 || putDist < 1.0);
+                // 1. 強制平倉/轉倉門檻：Delta > 0.35 (臨界極限風險)
+                const isCallForced = pos.has_call && (curCallDelta > 0.35);
+                const isPutForced = pos.has_put && (curPutDelta > 0.35);
+                const isForced = isCallForced || isPutForced;
+
+                // 2. 防禦預警門檻：Delta > 0.30 或 距離 < 1.0% (逼近警戒線)
+                const isCallWarn = pos.has_call && (curCallDelta > 0.30 || callDist < 1.0);
+                const isPutWarn = pos.has_put && (curPutDelta > 0.30 || putDist < 1.0);
+                const isWarn = isCallWarn || isPutWarn;
 
                 let scenario = null;
 
                 // 情境 4：雙賣中「安全側剩 0.2 點 (<=0.5 點)，危險側需平倉」
                 // 【單獨平倉危險側】直接單獨買回危險側！安全側留著讓系統免費結算。
                 if (pos.has_call && pos.has_put) {
-                    if (isCallThreat && curPutAsk <= 0.5) {
-                        const threatReason = curCallDelta > 0.30 ? `Delta ${curCallDelta.toFixed(2)} > 0.30` : `距現價 ${callDist.toFixed(1)}% < 1.0%`;
-                        scenario = {
-                            id: 4,
-                            badge: "🚨【單獨平倉危險側】",
-                            title: `上方 Call @ ${pos.call_strike} ${threatReason}（下方 Put 僅剩 ${curPutAsk.toFixed(1)} 點安全歸零）`,
-                            action: `👉 動作建議：直接單獨買回平倉 ${pos.call_strike}C 危險側！安全側 Put 放任自然結算省手續費`,
-                            bgClass: "bg-rose-950/60 border-rose-500/80 text-rose-300",
-                            tagClass: "bg-rose-500 text-white font-bold"
-                        };
-                    } else if (isPutThreat && curCallAsk <= 0.5) {
-                        const threatReason = curPutDelta > 0.30 ? `Delta ${curPutDelta.toFixed(2)} > 0.30` : `距現價 ${putDist.toFixed(1)}% < 1.0%`;
-                        scenario = {
-                            id: 4,
-                            badge: "🚨【單獨平倉危險側】",
-                            title: `下方 Put @ ${pos.put_strike} ${threatReason}（上方 Call 僅剩 ${curCallAsk.toFixed(1)} 點安全歸零）`,
-                            action: `👉 動作建議：直接單獨買回平倉 ${pos.put_strike}P 危險側！安全側 Call 放任自然結算省手續費`,
-                            bgClass: "bg-rose-950/60 border-rose-500/80 text-rose-300",
-                            tagClass: "bg-rose-500 text-white font-bold"
-                        };
+                    if (isCallWarn && curPutAsk <= 0.5) {
+                        if (isCallForced) {
+                            scenario = {
+                                id: 4,
+                                badge: "🚨【強制單獨平倉危險側】",
+                                title: `上方 Call @ ${pos.call_strike} 觸發 Delta ${curCallDelta.toFixed(2)} > 0.35 極限防線！（下方 Put 僅剩 ${curPutAsk.toFixed(1)} 點安全歸零）`,
+                                action: `👉 強制動作：切勿整組雙向平倉！請立即單獨買回平倉 ${pos.call_strike}C 危險側止損，安全側 Put 放任自然結算省手續費`,
+                                bgClass: "bg-rose-950/70 border-rose-500 text-rose-200 animate-pulse",
+                                tagClass: "bg-rose-600 text-white font-black"
+                            };
+                        } else {
+                            const threatReason = curCallDelta > 0.30
+                                ? (callDist < 1.0 ? `Delta ${curCallDelta.toFixed(2)} > 0.30 且 距現價僅 ${callDist.toFixed(1)}% < 1.0%` : `Delta ${curCallDelta.toFixed(2)} > 0.30 (距現價 ${callDist.toFixed(1)}%)`)
+                                : `距現價僅 ${callDist.toFixed(1)}% < 1.0% (Delta ${curCallDelta.toFixed(2)})`;
+                            scenario = {
+                                id: 4,
+                                badge: "⚠️【單獨平倉危險側預警】",
+                                title: `上方 Call @ ${pos.call_strike} 觸發 ${threatReason}（下方 Put 僅剩 ${curPutAsk.toFixed(1)} 點安全歸零）`,
+                                action: `👉 預警動作：部位逼近警戒線！若要防禦請單獨買回平倉 ${pos.call_strike}C，安全側 Put 留著自然結算省手續費`,
+                                bgClass: "bg-amber-950/60 border-amber-500/80 text-amber-300",
+                                tagClass: "bg-amber-500 text-black font-bold"
+                            };
+                        }
+                    } else if (isPutWarn && curCallAsk <= 0.5) {
+                        if (isPutForced) {
+                            scenario = {
+                                id: 4,
+                                badge: "🚨【強制單獨平倉危險側】",
+                                title: `下方 Put @ ${pos.put_strike} 觸發 Delta ${curPutDelta.toFixed(2)} > 0.35 極限防線！（上方 Call 僅剩 ${curCallAsk.toFixed(1)} 點安全歸零）`,
+                                action: `👉 強制動作：切勿整組雙向平倉！請立即單獨買回平倉 ${pos.put_strike}P 危險側止損，安全側 Call 放任自然結算省手續費`,
+                                bgClass: "bg-rose-950/70 border-rose-500 text-rose-200 animate-pulse",
+                                tagClass: "bg-rose-600 text-white font-black"
+                            };
+                        } else {
+                            const threatReason = curPutDelta > 0.30
+                                ? (putDist < 1.0 ? `Delta ${curPutDelta.toFixed(2)} > 0.30 且 距現價僅 ${putDist.toFixed(1)}% < 1.0%` : `Delta ${curPutDelta.toFixed(2)} > 0.30 (距現價 ${putDist.toFixed(1)}%)`)
+                                : `距現價僅 ${putDist.toFixed(1)}% < 1.0% (Delta ${curPutDelta.toFixed(2)})`;
+                            scenario = {
+                                id: 4,
+                                badge: "⚠️【單獨平倉危險側預警】",
+                                title: `下方 Put @ ${pos.put_strike} 觸發 ${threatReason}（上方 Call 僅剩 ${curCallAsk.toFixed(1)} 點安全歸零）`,
+                                action: `👉 預警動作：部位逼近警戒線！若要防禦請單獨買回平倉 ${pos.put_strike}P，安全側 Call 留著自然結算省手續費`,
+                                bgClass: "bg-amber-950/60 border-amber-500/80 text-amber-300",
+                                tagClass: "bg-amber-500 text-black font-bold"
+                            };
+                        }
                     }
                 }
 
-                // 情境 2：其中一邊被行情逼近（Delta > 0.30 或 距離 < 1.0%）
-                // 提示【手動提前平倉 / 轉倉】
-                if (!scenario && (isCallThreat || isPutThreat)) {
+                // 情境 2 分級提醒：強制平倉/轉倉 (Delta > 0.35) vs 防禦預警 (Delta > 0.30 或 距離 < 1.0%)
+                if (!scenario && isForced) {
+                    let sideText = isPutForced ? `下方 Put @ ${pos.put_strike}` : `上方 Call @ ${pos.call_strike}`;
+                    let triggerDelta = isPutForced ? curPutDelta : curCallDelta;
+                    let triggerDist = isPutForced ? putDist : callDist;
+                    scenario = {
+                        id: 2,
+                        badge: "🚨【強制平倉 / 轉倉】",
+                        title: `${sideText} 觸發 Delta ${triggerDelta.toFixed(2)} > 0.35 極限防線！（距現價 ${triggerDist.toFixed(1)}%）`,
+                        action: "👉 強制動作：突破臨界防線，尾部 Gamma 劇烈飆升！請立即手動買回平倉，或同時間平移向次週轉倉 (Roll Over) 止損",
+                        bgClass: "bg-rose-950/70 border-rose-500 text-rose-200 animate-pulse",
+                        tagClass: "bg-rose-600 text-white font-black"
+                    };
+                } else if (!scenario && isWarn) {
                     let sideText = "";
                     let triggerCond = "";
-                    if (isCallThreat) {
+                    if (isCallWarn) {
                         sideText = `上方 Call @ ${pos.call_strike}`;
-                        triggerCond = curCallDelta > 0.30 ? `Delta ${curCallDelta.toFixed(2)} > 0.30 (距現價 ${callDist.toFixed(1)}%)` : `距現價僅 ${callDist.toFixed(1)}% < 1.0% (Delta ${curCallDelta.toFixed(2)})`;
+                        if (curCallDelta > 0.30 && callDist < 1.0) {
+                            triggerCond = `Delta ${curCallDelta.toFixed(2)} > 0.30 且 距現價僅 ${callDist.toFixed(1)}% < 1.0%`;
+                        } else if (curCallDelta > 0.30) {
+                            triggerCond = `Delta ${curCallDelta.toFixed(2)} > 0.30 (距現價 ${callDist.toFixed(1)}%)`;
+                        } else {
+                            triggerCond = `距現價僅 ${callDist.toFixed(1)}% < 1.0% (Delta ${curCallDelta.toFixed(2)})`;
+                        }
                     } else {
                         sideText = `下方 Put @ ${pos.put_strike}`;
-                        triggerCond = curPutDelta > 0.30 ? `Delta ${curPutDelta.toFixed(2)} > 0.30 (距現價 ${putDist.toFixed(1)}%)` : `距現價僅 ${putDist.toFixed(1)}% < 1.0% (Delta ${curPutDelta.toFixed(2)})`;
+                        if (curPutDelta > 0.30 && putDist < 1.0) {
+                            triggerCond = `Delta ${curPutDelta.toFixed(2)} > 0.30 且 距現價僅 ${putDist.toFixed(1)}% < 1.0%`;
+                        } else if (curPutDelta > 0.30) {
+                            triggerCond = `Delta ${curPutDelta.toFixed(2)} > 0.30 (距現價 ${putDist.toFixed(1)}%)`;
+                        } else {
+                            triggerCond = `距現價僅 ${putDist.toFixed(1)}% < 1.0% (Delta ${curPutDelta.toFixed(2)})`;
+                        }
                     }
 
                     scenario = {
                         id: 2,
-                        badge: "⚠️【手動提前平倉 / 轉倉】",
-                        title: `${sideText} ${triggerCond}`,
-                        action: "👉 動作建議：立即手動買回平倉，或同時間平移向次週轉倉 (Roll Over) 維持淨收租",
+                        badge: "⚠️【防禦預警 · 逼近防線】",
+                        title: `${sideText} 觸發 ${triggerCond}`,
+                        action: "👉 預警動作：部位已逼近警戒線，密切盯盤！若 Delta 突破 0.35 需強制轉倉，目前可提早掛單平倉或向次週轉倉",
                         bgClass: "bg-amber-950/60 border-amber-500/80 text-amber-300",
                         tagClass: "bg-amber-500 text-black font-bold"
                     };
